@@ -377,7 +377,7 @@ proc union(gss: Gss, a, b: int): int =
 proc atnClosure(seed: seq[AtnConfig], states: openArray[AtnStateData],
     rules: openArray[AtnRuleData], stopRules: openArray[int],
     follows: openArray[seq[(int, bool)]], gss: Gss,
-    cache: PredictionCache = nil, precedenceRule = -1): seq[AtnConfig] =
+    cache: PredictionCache, precedenceRule = -1): seq[AtnConfig] =
   ## With `follows` (SLL), a configuration that leaves its rule with an
   ## empty stack also goes on at every call site of the rule. One that
   ## leaves `precedenceRule` through a call of precedence 0 is `suppressed`.

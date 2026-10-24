@@ -278,9 +278,38 @@ block parsegen_stack_sensitive_prediction:
   # Paper, section 2: A's choice depends on the rule that called it.
   let rules = "s : 'x' b | 'y' c ;\nb : a 'a' ;\nc : a 'b' 'a' ;\n" &
     "a : 'b' | ;"
-  for input in ["x b a", "x a", "y b b a", "y b a"]:
-    let got = tree(g(rules), input)
-    doAssert "syntax" notin got and "error" notin got, input & "\n" & got
+  expectTree(rules, "x b a", """
+    s
+    ├── 'x'
+    └── b
+        ├── a
+        │   └── 'b'
+        └── 'a'
+    """)
+  expectTree(rules, "x a", """
+    s
+    ├── 'x'
+    └── b
+        ├── a
+        └── 'a'
+    """)
+  expectTree(rules, "y b b a", """
+    s
+    ├── 'y'
+    └── c
+        ├── a
+        │   └── 'b'
+        ├── 'b'
+        └── 'a'
+    """)
+  expectTree(rules, "y b a", """
+    s
+    ├── 'y'
+    └── c
+        ├── a
+        ├── 'b'
+        └── 'a'
+    """)
 
 block parsegen_ambiguity_takes_lowest_alternative:
   expectTree("s : ID # first | ID # second ;", "a", """
@@ -318,16 +347,23 @@ block parsegen_nested_shared_prefix_stress:
   for _ in 0 ..< 17: input.add "y "
   let got = tree(g(rules), input)
   doAssert got.startsWith("s\n└── a\n"), got
-  # Callers that differ only in which alternative called `a` share one stack,
-  # so configurations stay linear in the nesting depth.
-  var (a, t, _) = analyzed(g(rules))
-  a.predictionCache = newPredictionCache(trackWork = true)
-  var diagnostics = Diagnostics(filename: "input")
-  let n = a.interpret(tokenize[int](t, input, diagnostics), input,
-    a.parserRules[0], diagnostics)
-  doAssert n != nil and not diagnostics.hasErrors, $diagnostics.items
-  doAssert a.predictionCache.predictionWork < 100_000,
-    $a.predictionCache.predictionWork
+  # Each level's decision reads ahead to the end of the input, over
+  # configurations for every level, so the work is about cubic in the depth
+  # (callers that differ only in which alternative called `a` share one
+  # stack). Doubling the depth may then multiply it by at most 8; exponential
+  # growth fails.
+  var previous = 0
+  for depth in [9, 18, 36]:
+    var (a, t, _) = analyzed(g(rules))
+    a.predictionCache = newPredictionCache(trackWork = true)
+    let input = "x ".repeat(depth) & "y ".repeat(depth - 1)
+    var diagnostics = Diagnostics(filename: "input")
+    let n = a.interpret(tokenize[int](t, input, diagnostics), input,
+      a.parserRules[0], diagnostics)
+    doAssert n != nil and not diagnostics.hasErrors, $diagnostics.items
+    let work = a.predictionCache.predictionWork
+    if previous > 0: doAssert work <= previous * 8, $previous & " -> " & $work
+    previous = work
 
 block parsegen_ambiguous_loop_work_is_bounded:
   var previous = 0
@@ -343,10 +379,9 @@ block parsegen_ambiguous_loop_work_is_bounded:
     doAssert n != nil and not diagnostics.hasErrors, $diagnostics.items
     let work = a.predictionCache.predictionWork
     if previous > 0:
-      # This grammar needs the loop decision to inspect the remaining run of
-      # shared-prefix tokens. Keep a generous quadratic bound to catch an
-      # exponential regression without making a wall-clock assertion.
-      doAssert work <= previous * 5, $previous & " -> " & $work
+      # The DFA caches the loop decision's lookahead, so the work is linear
+      # in the input: doubling it may not much more than double the work.
+      doAssert work * 2 <= previous * 5, $previous & " -> " & $work
     previous = work
 
 block parsegen_warm_dfa_does_no_atn_work:
