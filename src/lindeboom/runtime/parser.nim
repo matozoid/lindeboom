@@ -52,6 +52,7 @@ type
     stopRules: seq[int] ## rule whose stop state each ATN state is, or -1
     trackWork: bool
     work: int
+    fullContextOnly: bool ## skip SLL: every prediction in full context
 
   SourceText = ref object
     data: string
@@ -245,11 +246,15 @@ func expectedMessage*(expected: openArray[string], found: string): string =
 
 func peek*[K, L, T](p: ParserState[K, L, T]): T = p.tokens[p.i].kind
 
-proc newPredictionCache*(trackWork = false): PredictionCache =
+proc newPredictionCache*(trackWork = false,
+    fullContextOnly = false): PredictionCache =
+  ## `fullContextOnly` predicts in full context without trying SLL first,
+  ## which must give the same parses; tests compare the two.
   PredictionCache(entries: initTable[string, int](),
     dfaIndices: initTable[DfaKey, int](), dfaStarts: initTable[(int, int), int](),
     gss: Gss(indices: initTable[GssKey, int](),
-      setIndices: initTable[seq[int], int]()), trackWork: trackWork)
+      setIndices: initTable[seq[int], int]()), trackWork: trackWork,
+    fullContextOnly: fullContextOnly)
 
 func predictionWork*(cache: PredictionCache): int =
   ## Number of ATN configurations processed by predictions using this cache.
@@ -607,6 +612,8 @@ proc predict*[K, L, T](p: var ParserState[K, L, T], decision: int,
     precedence = 0): int =
   ## SLL first; retry with the active parser call stack when local context
   ## leaves multiple alternatives or cannot find a viable alternative.
+  if cache != nil and cache.fullContextOnly:
+    return p.predictLl(decision, states, decisions, rules, cache, precedence)
   let sllCache = if cache != nil: cache else: newPredictionCache()
   result = p.predictSll(decision, states, decisions, rules, sllCache, precedence)
   if result == -2:

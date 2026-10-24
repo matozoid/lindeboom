@@ -200,18 +200,19 @@ start
                     └── 'x'
 """)])]
 
-proc interpretedTree(d: Descriptor, input: string): string =
-  let (a, t, diag) = analyzed(d.grammar)
-  doAssert not diag.hasErrors, d.name & ": " & $diag.items
-  interpreted(a, t, input)
-
 let tmp = getTempDir() / "lindeboom_tantlr"
 
 for d in descriptors:
   block interpreter:
+    # Full-context prediction alone must parse as SLL first does.
+    let (a, t, diag) = analyzed(d.grammar)
+    doAssert not diag.hasErrors, d.name & ": " & $diag.items
+    let ll = a.fullContextOnly
     for (input, expected) in d.inputs:
-      let got = interpretedTree(d, input)
+      let got = interpreted(a, t, input)
       doAssert got == expected, d.name & " " & input.escape & ":\n" & got
+      let llGot = interpreted(ll, t, input)
+      doAssert llGot == got, d.name & " " & input.escape & " in full LL:\n" & llGot
 
 block generated_parsers_match:
   for d in descriptors:
@@ -304,8 +305,14 @@ block converted_interpreter:
   for c in convertedCases:
     let (a, t, diag) = analyzed(c.grammar)
     doAssert not diag.hasErrors, c.name & ": " & $diag.items
+    let ll = a.fullContextOnly
     for (input, expected) in c.inputs:
-      c.checkConverted(input, expected, interpreted(a, t, input))
+      let got = interpreted(a, t, input)
+      c.checkConverted(input, expected, got)
+      let llGot = interpreted(ll, t, input)
+      if llGot != got:
+        failures.add c.name & " " & input.escape & " in full LL:\n" & llGot &
+          "\nwith SLL first:\n" & got
   doAssert failures.len == 0, "\n\n" & failures.join("\n\n")
 
 block converted_generated_parsers:

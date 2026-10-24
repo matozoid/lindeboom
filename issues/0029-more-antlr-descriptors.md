@@ -25,7 +25,7 @@ precedence climbing interact.
       issue 22
 - [x] Each one in the interpreter and as a generated parser, as now; a list
       in `tantlr.nim` of the descriptors left out and why
-- [ ] A prediction mode that always uses full LL, and a test that SLL
+- [x] A prediction mode that always uses full LL, and a test that SLL
       first gives the same trees and diagnostics on the descriptors and the
       fuzz inputs: what issue 26 changes must not change a parse
 
@@ -47,3 +47,9 @@ are in, either there or written out in `tantlr.nim`, and all pass with the
 prediction of issue 24. Left out, as `tantlr.nim` lists: SemPredFailOption
 (a failing predicate), ExprAmbiguity_1 and _2 (rule arguments), and
 FullContextIF_THEN_ELSEParse_6, the same as _5.
+
+`newPredictionCache(fullContextOnly = true)` skips SLL and predicts every
+decision in full context; `fullContextOnly(a)` in `codegenhelpers` gives an
+`Analysis` that uses it. `tantlr` and `tfuzz` check that the interpreter
+gives the same output with it as with SLL first. Letting SLL pick the
+lowest alternative where it now retries in full LL fails both suites.

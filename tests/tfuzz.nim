@@ -1,5 +1,6 @@
 ## Random input must never crash or hang a parser, interpreted or
-## generated, and both must give the same result.
+## generated, and both must give the same result, as must the interpreter
+## predicting in full context only.
 
 import std/[assertions, os, random, strutils]
 import lindeboom/[grammar, lexgen, parsegen]
@@ -75,10 +76,14 @@ block fuzz_parsers_never_crash_and_agree:
       if i mod 2 == 0: inputs.add r.tokenSoup(ps)
       else: inputs.add r.mutant(r.sample(c.inputs))
     let got = runDriver(compile(dir, standalone = false), dir, inputs)
+    let ll = a.fullContextOnly
     for i, input in inputs:
       let expected = interpreted(a, t, input)
       doAssert got[i] == expected, c.grammarFile & " " & input.escape & ":\n" & got[i] &
         "\nexpected:\n" & expected
+      let llGot = interpreted(ll, t, input)
+      doAssert llGot == expected, c.grammarFile & " " & input.escape &
+        " in full LL:\n" & llGot & "\nwith SLL first:\n" & expected
 
 block fuzz_front_end_never_crashes:
   # mutated grammars go through every stage that accepts them

@@ -17,6 +17,12 @@ proc interpreted*(a: Analysis, t: LexerTables, input: string): string =
   for x in d: result.add $x & "\n"
   if n != nil: result.add n.treeRepr(a.treeNames)
 
+proc fullContextOnly*(a: Analysis): Analysis =
+  ## `a` predicting in full context only, without SLL first. It must parse
+  ## everything as `a` does.
+  result = a
+  result.predictionCache = newPredictionCache(fullContextOnly = true)
+
 proc generate*(c: Case, dir: string, standalone: bool): Analysis =
   ## Writes the lexer, parser and a driver to `dir`.
   var (g, d) = loadGrammar(readFile(c.grammarFile), c.grammarFile)
