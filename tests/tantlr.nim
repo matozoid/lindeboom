@@ -1,9 +1,19 @@
 ## Prediction tests ported from the descriptors of ANTLR 4's runtime test
 ## suite (runtime-testsuite/resources/org/antlr/v4/test/runtime/descriptors).
 ## Actions and diagnostics are replaced by parse tree expectations. Each
-## grammar runs in the interpreter and as a generated parser.
+## grammar runs in the interpreter and as a generated parser. The ones below
+## are written out here; the converted files in `tests/antlr` are described
+## in its README.
+##
+## Left out, because they need what Lindeboom does not support:
+##
+## - FullContextParsing: ExprAmbiguity_1 and _2 (rule arguments and
+##   predicates on them; LeftRecursion covers the same expressions), and
+##   FullContextIF_THEN_ELSEParse_6, the same as _5.
+## - LeftRecursion: SemPredFailOption (a predicate that fails).
 
-import std/[assertions, os, strutils]
+import std/[algorithm, assertions, os, strutils, tables]
+from std/unicode import runeLen
 import lindeboom/[grammar, lexgen, parsegen]
 import ./[codegenhelpers, parsehelpers]
 
@@ -216,3 +226,99 @@ block generated_parsers_match:
     let got = runDriver(compile(dir, standalone = false), dir, inputs)
     for i, (input, expected) in d.inputs:
       doAssert got[i] == expected, d.name & " " & input.escape & ":\n" & got[i]
+
+# ---- descriptors converted from ANTLR's files, in tests/antlr ----
+
+type Converted = object
+  name, grammar: string
+  inputs: seq[(string, string)] ## input and the expected tree, "" for none
+
+proc readConverted(file: string): (string, string, string) =
+  ## The grammar, input and expected tree (ANTLR's `toStringTree` without
+  ## `<EOF>`) of a converted descriptor.
+  var sections = initTable[string, string]()
+  var name = ""
+  for line in readFile(file).splitLines:
+    if line.len > 2 and line[0] == '[' and line[^1] == ']':
+      name = line[1 .. ^2]
+      sections[name] = ""
+    elif name.len > 0:
+      sections[name].add line & "\n"
+  (sections["grammar"].strip & "\n", sections["input"].strip.unescape,
+    sections.getOrDefault("tree").strip)
+
+proc lispTree(repr: string): string =
+  ## A tree printed by `treeRepr` in the form of ANTLR's `toStringTree`.
+  type Item = tuple[text: string, sons: seq[string]]
+  var stack: seq[Item]
+  proc close(stack: var seq[Item]) =
+    let x = stack.pop
+    let s = if x.sons.len == 0: x.text else: "(" & x.text & " " & x.sons.join(" ") & ")"
+    if stack.len > 0: stack[^1].sons.add s
+    else: stack.add (s, @[])
+  for line in repr.splitLines:
+    if line.len == 0: continue
+    let at = line.rfind("── ")
+    let start = if at < 0: 0 else: at + "── ".len
+    let depth = line[0 ..< start].runeLen div 4
+    var text = line[start .. ^1]
+    let colon = text.find(": ")
+    if colon > 0 and text[0 ..< colon].validIdentifier: text = text[colon + 2 .. ^1]
+    if text.startsWith('\''):
+      text = text[1 .. ^2].replace("\\'", "'").replace("\\\\", "\\")
+    elif text[0].isUpperAscii:
+      let space = text.find(' ')
+      text = if space < 0: "" else: text[space + 1 .. ^1].unescape
+    while stack.len > depth: stack.close
+    stack.add (text, @[])
+  while stack.len > 1: stack.close
+  stack.close
+  stack[0].text
+
+proc converted(): seq[Converted] =
+  ## The converted descriptors, one per grammar, in file name order.
+  var files: seq[string]
+  for group in walkDirs(currentSourcePath().parentDir / "antlr" / "*"):
+    for f in walkFiles(group / "*.txt"): files.add f
+  files.sort
+  for f in files:
+    let (grammar, input, tree) = readConverted(f)
+    let name = f.parentDir.extractFilename & "_" & f.splitFile.name
+    var i = 0
+    while i < result.len and result[i].grammar != grammar: inc i
+    if i == result.len: result.add Converted(name: name, grammar: grammar)
+    result[i].inputs.add (input, tree)
+
+var failures: seq[string]
+
+proc checkConverted(c: Converted, input, expected, got: string) =
+  ## `got` is what the driver prints: diagnostics, then the tree.
+  let tree = lispTree(got)
+  if got.contains("error:") or (expected.len > 0 and tree != expected):
+    failures.add c.name & " " & input.escape & ":\n" & got & "\n" & tree &
+      "\nexpected " & expected
+
+let convertedCases = converted()
+
+block converted_interpreter:
+  for c in convertedCases:
+    let (a, t, diag) = analyzed(c.grammar)
+    doAssert not diag.hasErrors, c.name & ": " & $diag.items
+    for (input, expected) in c.inputs:
+      c.checkConverted(input, expected, interpreted(a, t, input))
+  doAssert failures.len == 0, "\n\n" & failures.join("\n\n")
+
+block converted_generated_parsers:
+  for c in convertedCases:
+    let dir = tmp / c.name
+    createDir(dir)
+    let grammarFile = dir / "t.ldb"
+    writeFile(grammarFile, c.grammar)
+    var inputs: seq[string]
+    for (input, _) in c.inputs: inputs.add input
+    discard generate(Case(grammarFile: grammarFile, inputs: inputs), dir,
+      standalone = false)
+    let got = runDriver(compile(dir, standalone = false), dir, inputs)
+    for i, (input, expected) in c.inputs:
+      c.checkConverted(input, expected, got[i])
+  doAssert failures.len == 0, "\n\n" & failures.join("\n\n")

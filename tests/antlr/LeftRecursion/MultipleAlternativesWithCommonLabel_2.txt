@@ -1,0 +1,25 @@
+[grammar]
+grammar T;
+s : e ;
+e : e '*' e
+  | e '+' e
+  | INT
+  | '(' e ')'
+  | left=e INC
+  | left=e DEC
+  | ID
+  ;
+ID : 'a'..'z'+ ;
+INT : '0'..'9'+ ;
+INC : '++' ;
+DEC : '--' ;
+WS : (' '|'\n') -> skip;
+
+[start]
+s
+
+[input]
+"1+2"
+
+[tree]
+(s (e (e 1) + (e 2)))

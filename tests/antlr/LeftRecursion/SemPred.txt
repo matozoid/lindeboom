@@ -1,0 +1,17 @@
+[grammar]
+grammar T;
+s  : a ;
+a : a  ID
+  | ID
+  ;
+ID : 'a'..'z'+ ;
+WS : (' '|'\n') -> skip ;
+
+[start]
+s
+
+[input]
+"x y z"
+
+[tree]
+(s (a (a (a x) y) z))

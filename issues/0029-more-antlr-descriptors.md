@@ -16,12 +16,34 @@ precedence climbing interact.
 
 ## Tasks
 
-- [ ] All FullContextParsing descriptors
+- [x] All FullContextParsing descriptors
 - [ ] The ParserExec descriptors that don't need actions beyond what a
       parse tree or error expectation can show
-- [ ] The LeftRecursion descriptors (expressions, suffixes, prefixes,
+- [x] The LeftRecursion descriptors (expressions, suffixes, prefixes,
       associativity, ternaries, `PrecedenceFilterConsidersContext` variants)
 - [ ] The SemPredEvalParser descriptors on precedence; the others wait for
       issue 22
-- [ ] Each one in the interpreter and as a generated parser, as now; a list
+- [x] Each one in the interpreter and as a generated parser, as now; a list
       in `tantlr.nim` of the descriptors left out and why
+- [ ] A prediction mode that always uses full LL, and a test that SLL
+      first gives the same trees and diagnostics on the descriptors and the
+      fuzz inputs: what issue 26 changes must not change a parse
+
+## Progress
+
+FullContextParsing and LeftRecursion come first because issue 26 changes
+SLL prediction for every precedence rule. They are in `tests/antlr`, one
+file per descriptor in its group's directory: the grammar rewritten
+mechanically (actions, alternative labels and `{<True()>}?` removed,
+implicit tokens declared), the input, and ANTLR's `toStringTree` output.
+The descriptors that print through actions were ported by hand, with the
+tree ANTLR's prediction gives; for return values, the tree whose value the
+descriptor prints. `tantlr.nim` turns `treeRepr` into `toStringTree` form,
+groups the files by grammar and runs each grammar in the interpreter and
+as one generated parser.
+
+97 of 98 LeftRecursion descriptors and 12 of 15 FullContextParsing ones
+are in, either there or written out in `tantlr.nim`, and all pass with the
+prediction of issue 24. Left out, as `tantlr.nim` lists: SemPredFailOption
+(a failing predicate), ExprAmbiguity_1 and _2 (rule arguments), and
+FullContextIF_THEN_ELSEParse_6, the same as _5.

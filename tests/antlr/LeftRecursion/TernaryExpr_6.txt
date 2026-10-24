@@ -1,0 +1,20 @@
+[grammar]
+grammar T;
+s  : e EOF ;
+e : e '*' e
+  | e '+' e
+  |<assoc=right> e '?' e ':' e
+  |<assoc=right> e '=' e
+  | ID
+  ;
+ID : 'a'..'z'+ ;
+WS : (' '|'\n') -> skip ;
+
+[start]
+s
+
+[input]
+"a?b+c:d"
+
+[tree]
+(s (e (e a) ? (e (e b) + (e c)) : (e d)))

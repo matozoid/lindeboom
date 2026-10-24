@@ -1,0 +1,58 @@
+[grammar]
+grammar Expr;
+tokens { K_IN, K_AND, K_OR, K_TRUE, K_FALSE, K_NULL }
+prog : expression EOF;
+expression
+    : ID '(' expression (',' expression)* ')'
+    | '(' expression ')'
+    | '!' expression
+    | '-' expression
+    | '+' expression
+    | expression '^' expression
+    | expression '*' expression
+    | expression '/' expression
+    | expression '%' expression
+    | expression '-' expression
+    | expression '+' expression
+    | expression '=' expression
+    | expression '!=' expression
+    | expression '>' expression
+    | expression '>=' expression
+    | expression '<' expression
+    | expression '<=' expression
+    | expression K_IN '(' expression (',' expression)* ')'
+    | expression ( '&' | K_AND) expression
+    | expression ( '|' | K_OR) expression
+    | '[' expression (',' expression)* ']'
+    | K_TRUE
+    | K_FALSE
+    | NUMBER
+    | DATE
+    | ID
+    | SQ_STRING
+    | K_NULL
+    ;
+
+
+fragment DIGIT    : '0' .. '9';
+fragment UPPER    : 'A' .. 'Z';
+fragment LOWER    : 'a' .. 'z';
+fragment LETTER   : LOWER | UPPER;
+fragment WORD     : LETTER | '_' | '$' | '#' | '.';
+fragment ALPHANUM : WORD | DIGIT;
+
+
+ID     : LETTER ALPHANUM*;
+NUMBER : DIGIT+ ('.' DIGIT+)? (('e'|'E')('+'|'-')? DIGIT+)?;
+DATE   : '\'' DIGIT DIGIT DIGIT DIGIT '-' DIGIT DIGIT '-' DIGIT DIGIT (' ' DIGIT DIGIT ':' DIGIT DIGIT ':' DIGIT DIGIT ('.' DIGIT+)?)? '\'';
+SQ_STRING       : '\'' ('\'\'' | ~'\'')* '\'';
+DQ_STRING       : '"' ('\\\\"' | ~'"')* '"';
+WS     : [ \t\n\r]+ -> skip ;
+COMMENTS        : ('/*' .*? '*' '/' | '//' ~'\n'* '\n' ) -> skip;
+
+[start]
+prog
+
+[input]
+"Test(1, 3)"
+

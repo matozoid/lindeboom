@@ -1,0 +1,20 @@
+[grammar]
+grammar T;
+s  : expr EOF ;
+expr : literal
+     | op expr
+     | expr op expr
+     ;
+literal : '-'? Integer ;
+op : '+' | '-' ;
+Integer : [0-9]+ ;
+WS : (' '|'\n') -> skip ;
+
+[start]
+s
+
+[input]
+"-1"
+
+[tree]
+(s (expr (literal - 1)))

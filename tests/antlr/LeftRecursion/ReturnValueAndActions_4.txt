@@ -1,0 +1,19 @@
+[grammar]
+grammar T;
+s : e ;
+e : a=e '*' b=e
+  | a=e '+' b=e
+  | INT
+  | '(' x=e ')'
+  ;
+INT : '0'..'9'+ ;
+WS : (' '|'\n') -> skip ;
+
+[start]
+s
+
+[input]
+"(1+2)*3"
+
+[tree]
+(s (e (e ( (e (e 1) + (e 2)) )) * (e 3)))

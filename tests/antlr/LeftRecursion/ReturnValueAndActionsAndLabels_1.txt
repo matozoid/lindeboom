@@ -1,0 +1,23 @@
+[grammar]
+grammar T;
+s : q=e ;
+e : a=e op='*' b=e
+  | a=e '+' b=e
+  | INT
+  | '(' x=e ')'
+  | x=e '++'
+  | e '--'
+  | ID
+  ;
+ID : 'a'..'z'+ ;
+INT : '0'..'9'+ ;
+WS : (' '|'\n') -> skip ;
+
+[start]
+s
+
+[input]
+"4"
+
+[tree]
+(s (e 4))

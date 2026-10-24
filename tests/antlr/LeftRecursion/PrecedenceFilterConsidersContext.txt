@@ -1,0 +1,16 @@
+[grammar]
+grammar T;
+prog
+
+: statement* EOF ;
+statement: letterA | statement letterA 'b' ;
+letterA: 'a';
+
+[start]
+prog
+
+[input]
+"aa"
+
+[tree]
+(prog (statement (letterA a)) (statement (letterA a)))

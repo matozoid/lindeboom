@@ -1,0 +1,17 @@
+[grammar]
+grammar T;
+s : '{' stat* '}' ;
+stat : 'if' ID 'then' stat ('else' ID)?
+     | 'return'
+     ;
+ID : 'a'..'z'+ ;
+WS : (' '|'\t'|'\n')+ -> skip ;
+
+[start]
+s
+
+[input]
+"{ if x then if y then return else foo else bar }"
+
+[tree]
+(s { (stat if x then (stat if y then (stat return) else foo) else bar) })
