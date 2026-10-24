@@ -25,12 +25,12 @@ Two parts of issue 17's prediction differ from ANTLR 4 without saying so.
 
 ## Tasks
 
-- [ ] Decide: port ANTLR's prediction contexts and merge, or keep the set
-      representation and document why it is equivalent where it matters.
-      `union` does not merge two frames with the same return state into one
-      with the union of their parents, so equal sets of stacks can get
-      different ids. Groups are then finer than ANTLR's: never a wrong
-      choice, but full context can need more lookahead to settle.
+- [x] Keep the set representation, made canonical: `union` merges frames
+      with the same return state and precedence into one over the union of
+      their parents, as ANTLR merges array contexts, so a set of stacks is
+      a trie from the top and equal sets get the same id (`tests/tgss.nim`).
+      Not ported: ANTLR's SLL wildcard, where merging with the empty
+      context gives the empty context. It would only coarsen SLL groups.
 - [x] Full context stops as ANTLR's `resolvesToJustOneViableAlt` does
       (`settled`): taking the lowest alternative once every group conflicts
       could pick an alternative whose configurations all die later, as

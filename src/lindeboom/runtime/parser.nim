@@ -119,10 +119,14 @@ type
     ## Call stacks of ATN configurations, as in ANTLR's merged contexts: a
     ## stack is an interned set of frames (id 0 is the bottom of the stack),
     ## so configurations that differ only in their callers share one entry.
+    ## A set has at most one frame per return state and precedence, whose
+    ## parent is the union of the callers below it: a set of stacks stored
+    ## as a trie from the top, so equal sets of stacks have the same id.
     nodes: seq[GssNode]
     indices: Table[GssKey, int]
     sets: seq[seq[int]]
     setIndices: Table[seq[int], int]
+    unions: Table[(int, int), int]
 
   DfaKey = object
     decision, precedence: int
@@ -345,22 +349,26 @@ proc single(gss: Gss, frame: int): int = gss.intern(@[frame])
 
 proc union(gss: Gss, a, b: int): int =
   if a == b: return a
-  var merged: seq[int]
-  let x = gss.sets[a - 1]
-  let y = gss.sets[b - 1]
-  var i, j = 0
-  while i < x.len or j < y.len:
-    if j == y.len or (i < x.len and x[i] < y[j]):
-      merged.add x[i]
-      inc i
-    elif i == x.len or y[j] < x[i]:
-      merged.add y[j]
-      inc j
-    else:
-      merged.add x[i]
-      inc i
-      inc j
-  gss.intern(merged)
+  let pair = (min(a, b), max(a, b))
+  if pair in gss.unions: return gss.unions[pair]
+  # Frames with the same return state and precedence become one frame over
+  # the union of their parents, as ANTLR merges array contexts.
+  var parents = initTable[(int, int), int]()
+  var bottom = false
+  for frames in [gss.sets[a - 1], gss.sets[b - 1]]:
+    for frame in frames:
+      if frame == 0:
+        bottom = true
+        continue
+      let node = gss.nodes[frame - 1]
+      let top = (node.returnState, node.precedence)
+      parents[top] = if top in parents: gss.union(parents[top], node.parent)
+        else: node.parent
+  var merged = if bottom: @[0] else: @[]
+  for top, parent in parents: merged.add gss.push(top[0], parent, top[1])
+  merged.sort()
+  result = gss.intern(merged)
+  gss.unions[pair] = result
 
 proc atnClosure(seed: seq[AtnConfig], states: openArray[AtnStateData],
     rules: openArray[AtnRuleData], stopRules: openArray[int],
