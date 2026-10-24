@@ -365,6 +365,52 @@ block parsegen_warm_dfa_does_no_atn_work:
     work.add a.predictionCache.predictionWork - before
   doAssert work[0] < 100 and work[1] == 0 and work[2] == 0, $work
 
+proc warmWork(rules: string, inputs: openArray[string]): seq[int] =
+  ## Prediction work of parsing each of `inputs` in turn with one cache.
+  var (a, t, _) = analyzed(g(rules))
+  a.predictionCache = newPredictionCache(trackWork = true)
+  for input in inputs:
+    var diagnostics = Diagnostics(filename: "input")
+    let before = a.predictionCache.predictionWork
+    let n = a.interpret(tokenize[int](t, input, diagnostics), input,
+      a.parserRules[0], diagnostics)
+    doAssert n != nil and not diagnostics.hasErrors, $diagnostics.items
+    result.add a.predictionCache.predictionWork - before
+
+block parsegen_completed_alternative_stays_in_sll:
+  # `a`'s empty alternative leaves the rule at once; SLL follows it to the
+  # call site instead of retrying in full context.
+  let work = warmWork("s : (a ID ';')* ;\na : ID | ;",
+    ["p q ; r ;", "p q ; r ; s t ; u ;"])
+  doAssert work[1] == 0, $work
+
+block parsegen_precedence_loop_stays_in_sll:
+  # The loop exit leaves the rule at once too; the precedence filter keeps
+  # SLL greedy, so a warm cache needs no ATN work.
+  var long = "1"
+  for i in 0 ..< 100: long.add(if i mod 3 == 0: " * 2" elif i mod 3 == 1: " + 3" else: " + +")
+  let work = warmWork("e : e '*' e | e '+' e | e '+' '+' | INT ;",
+    ["1 * 2 + 3 + + * 4", long, long])
+  doAssert work[2] == 0, $work
+
+block parsegen_context_sensitive_decision:
+  # `e`'s alternatives meet after `a` or `b` with an empty context: a real
+  # SLL conflict that full context resolves.
+  let rules = "s : ('$' a | '@' b)* ;\na : e ID ;\nb : e INT ID ;\ne : INT | ;"
+  expectTree(rules, "$ 1 x @ 2 y", """
+    s
+    ├── '$'
+    ├── a
+    │   ├── e
+    │   │   └── INT "1"
+    │   └── ID "x"
+    ├── '@'
+    └── b
+        ├── e
+        ├── INT "2"
+        └── ID "y"
+    """)
+
 block parsegen_prediction_loops:
   let rules = "s : ID (',' ID)* ','? ;"
   expectTree(rules, "a, b,", """

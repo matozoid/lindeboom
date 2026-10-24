@@ -150,5 +150,6 @@ proc interpret*(a: Analysis, tokens: seq[LexerToken[int]], src: string, rule: in
   var p = initParserState[int, int, int](tokens, src, names, ruleNames,
     proc (r, kind: int): bool = kind in follows[r])
   result = a.runRule(p, rule, 0, -1)
+  if p.retryInFullContext(result): result = a.runRule(p, rule, 0, -1)
   p.finish(result, d)
   d.formatSyntaxErrors(formatter)

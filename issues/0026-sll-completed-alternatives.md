@@ -1,7 +1,7 @@
 ---
 id: 26
 title: SLL prediction falls back to full LL whenever an alternative completes
-status: open
+status: done
 labels: [parser, performance]
 depends: [17]
 ---
@@ -64,19 +64,28 @@ in SLL.
 
 ## Tasks
 
-- [ ] Global FOLLOW in SLL closure: a stop-state configuration with an empty
+- [x] Global FOLLOW in SLL closure: a stop-state configuration with an empty
       stack continues at every call site's return state, and stays as
       `state: -1` for entry rules
-- [ ] Remove `needsFullContext`; fall back to LL only on an SLL conflict,
+- [x] Remove `needsFullContext`; fall back to LL only on an SLL conflict,
       or at EOF with more than one accepted alternative (check against
       ANTLR's `allConfigsInRuleStopStates` and `skippedStopStates`)
-- [ ] Precedence filter on precedence-decision start states, as ANTLR's
-      `applyPrecedenceFilter`
-- [ ] Tests, as `parsegen_warm_dfa_does_no_atn_work` in `tparsegen`:
-  - [ ] `s : a ID ; a : ID | ;` (needs only global FOLLOW): no ATN work on
+- [x] Precedence filter on precedence-decision start states, as ANTLR's
+      `applyPrecedenceFilter`, with its `precedenceFilterSuppressed`: an exit
+      configuration that left through a call of precedence 0 is kept, since
+      it may continue inside an outer loop alternative
+      (LeftRecursion `ReturnValueAndActionsList1`)
+- [x] Two-stage parsing, as ANTLR: with global FOLLOW, SLL can settle a
+      choice through a caller that is not the real one, before full context
+      would see a syntax error, and then errors and recovery differ (fuzz:
+      `calc ... c()c()` in `features.ldb`, `loop a<EOF>` in `ambiguous.ldb`).
+      A parse with a syntax error is redone with full-context prediction
+      only (`retryInFullContext`), so errors are those of full context.
+- [x] Tests, as `parsegen_warm_dfa_does_no_atn_work` in `tparsegen`:
+  - [x] `s : a ID ; a : ID | ;` (needs only global FOLLOW): no ATN work on
         a warm cache
-  - [ ] a precedence loop decision: no ATN work on a warm cache
-  - [ ] the context-sensitive decision above: right trees for both `$` and
+  - [x] a precedence loop decision: no ATN work on a warm cache
+  - [x] the context-sensitive decision above: right trees for both `$` and
         `@` inputs, full LL only for `e`'s decision
-- [ ] Interpreter and generated parsers still agree; `tantlr` and the fuzz
+- [x] Interpreter and generated parsers still agree; `tantlr` and the fuzz
       suite pass

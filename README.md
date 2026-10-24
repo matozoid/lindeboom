@@ -356,6 +356,13 @@ results. This is the ALL(\*) algorithm from [Parr, Harwell, and Fisher,
 Ambiguous input is resolved in favor of the earliest alternative.
 Expression rules continue to use precedence climbing.
 
+As in ANTLR, a prediction first looks only at the rules it can see from the
+choice, and uses the active call context only when that leaves more than one
+alternative. Without the context a prediction can settle a choice before the
+input fails to match it, so input with a syntax error is parsed a second
+time with the call context in every prediction. Errors and recovery are
+those of the second parse.
+
 ## The generated code
 
 `lindeboom gen grammar.ldb` writes two modules, named after the grammar

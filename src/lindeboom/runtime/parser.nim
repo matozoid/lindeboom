@@ -50,6 +50,9 @@ type
     dfaStates: seq[PredictionDfaState]
     gss: Gss
     stopRules: seq[int] ## rule whose stop state each ATN state is, or -1
+    follows: seq[seq[(int, bool)]]
+      ## return state of each call site of each rule, and whether the call
+      ## has precedence 0
     trackWork: bool
     work: int
     fullContextOnly: bool ## skip SLL: every prediction in full context
@@ -92,6 +95,8 @@ type
     reportedAt: int         ## token of the last reported error
     recoveredAt: int        ## token where the last recovery stopped
     recoveredDepth: int     ## rules being parsed then
+    fullContext: bool       ## predict in full context only: the retry after
+                            ## a syntax error
 
   TreeNames* = object
     ## Display names by ordinal, for `treeRepr`.
@@ -101,6 +106,7 @@ type
     state, alternative: int
     stack: int
     precedence: int
+    suppressed: bool ## exempt from `precedenceFilter`
 
   GssNode = object
     returnState, parent, precedence: int
@@ -262,18 +268,20 @@ func predictionWork*(cache: PredictionCache): int =
 
 func `==`(a, b: AtnConfig): bool =
   a.state == b.state and a.alternative == b.alternative and
-    a.stack == b.stack and a.precedence == b.precedence
+    a.stack == b.stack and a.precedence == b.precedence and
+    a.suppressed == b.suppressed
 
 func hash(c: AtnConfig): Hash =
   result = hash(c.state)
   result = result !& hash(c.alternative)
   result = result !& hash(c.stack)
   result = result !& hash(c.precedence)
+  result = result !& hash(c.suppressed)
   result = !$result
 
 func cmp(a, b: AtnConfig): int =
-  cmp((a.state, a.alternative, a.stack, a.precedence),
-    (b.state, b.alternative, b.stack, b.precedence))
+  cmp((a.state, a.alternative, a.stack, a.precedence, a.suppressed),
+    (b.state, b.alternative, b.stack, b.precedence, b.suppressed))
 
 func `==`(a, b: DfaKey): bool =
   a.decision == b.decision and a.precedence == b.precedence and
@@ -285,17 +293,6 @@ func hash(k: DfaKey): Hash =
   result = result !& hash(k.configs)
   result = !$result
 
-func needsFullContext(configs: openArray[AtnConfig]): bool =
-  ## Whether one alternative has left the decision's rule while another is
-  ## still in it: without the caller's context SLL cannot tell them apart.
-  var completed, continuing = initHashSet[int]()
-  for c in configs:
-    if c.state < 0: completed.incl c.alternative
-    else: continuing.incl c.alternative
-  for alternative in completed:
-    for other in continuing:
-      if alternative != other: return true
-
 proc dfaState(cache: PredictionCache, decision, precedence: int,
     configs: seq[AtnConfig]): int =
   ## The state for the closed `configs`, added if it is new.
@@ -305,10 +302,8 @@ proc dfaState(cache: PredictionCache, decision, precedence: int,
   if result < 0:
     result = cache.dfaStates.len
     cache.dfaIndices[key] = result
-    let retry = needsFullContext(configs)
     cache.dfaStates.add PredictionDfaState(configs: key.configs,
-      transitions: initTable[int, int](), resolved: retry,
-      result: if retry: -2 else: 0)
+      transitions: initTable[int, int]())
 
 proc resolve(cache: PredictionCache, state, alternative: int) =
   cache.dfaStates[state].resolved = true
@@ -364,20 +359,24 @@ proc union(gss: Gss, a, b: int): int =
 
 proc atnClosure(seed: seq[AtnConfig], states: openArray[AtnStateData],
     rules: openArray[AtnRuleData], stopRules: openArray[int],
-    gss: Gss, cache: PredictionCache = nil): seq[AtnConfig] =
+    follows: openArray[seq[(int, bool)]], gss: Gss,
+    cache: PredictionCache = nil, precedenceRule = -1): seq[AtnConfig] =
+  ## With `follows` (SLL), a configuration that leaves its rule with an
+  ## empty stack also goes on at every call site of the rule. One that
+  ## leaves `precedenceRule` through a call of precedence 0 is `suppressed`.
   # `seq` assignment aliases its backing storage. DFA transitions feed cached
   # configuration sets back into closure, so the work queue must own its copy.
   var queue = @seed
   # Configurations that differ only in their stack are merged into one with
   # the union of the stacks; a config is expanded again when its stack grows.
-  var current = initTable[(int, int, int), int]()
-  var order: seq[(int, int, int)]
+  var current = initTable[(int, int, int, bool), int]()
+  var order: seq[(int, int, int, bool)]
   var i = 0
   while i < queue.len:
     var c = queue[i]
     inc i
     if cache != nil and cache.trackWork: inc cache.work
-    let key = (c.state, c.alternative, c.precedence)
+    let key = (c.state, c.alternative, c.precedence, c.suppressed)
     if key in current:
       let merged = gss.union(current[key], c.stack)
       if merged == current[key]: continue
@@ -398,6 +397,13 @@ proc atnClosure(seed: seq[AtnConfig], states: openArray[AtnStateData],
         else:
           next.stack = gss.bottom
           next.state = -1
+          if follows.len > 0:
+            # The caller is unknown: its precedence too, so allow every one.
+            for (returnState, outermost) in follows[rule]:
+              queue.add AtnConfig(state: returnState,
+                alternative: c.alternative, stack: gss.bottom, precedence: 0,
+                suppressed: c.suppressed or
+                  (outermost and rule == precedenceRule))
         queue.add next
       continue
     for edge in states[c.state].edges:
@@ -417,7 +423,7 @@ proc atnClosure(seed: seq[AtnConfig], states: openArray[AtnStateData],
         discard
   for key in order:
     result.add AtnConfig(state: key[0], alternative: key[1], precedence: key[2],
-      stack: current[key])
+      suppressed: key[3], stack: current[key])
 
 proc conflicting(configs: openArray[AtnConfig]): bool =
   ## ANTLR's termination test: every (state, context) is reachable through
@@ -448,12 +454,19 @@ proc expectedAtn(configs: openArray[AtnConfig], states: openArray[AtnStateData])
 
 proc prepare(cache: PredictionCache, states: openArray[AtnStateData],
     rules: openArray[AtnRuleData]) =
-  ## Fills in the rule whose stop state each ATN state is.
+  ## Fills in the rule whose stop state each ATN state is, and the return
+  ## states of each rule's call sites.
   if cache.stopRules.len != states.len:
     cache.stopRules = newSeq[int](states.len)
     for id in cache.stopRules.mitems: id = -1
     for rule, info in rules:
       if info.start != info.stop: cache.stopRules[info.stop] = rule
+    cache.follows = newSeq[seq[(int, bool)]](rules.len)
+    for state in states:
+      for edge in state.edges:
+        let follow = (edge.target, edge.minimumPrecedence == 0)
+        if edge.kind == atCall and follow notin cache.follows[edge.rule]:
+          cache.follows[edge.rule].add follow
 
 func seed(d: AtnDecisionData, stack, precedence: int): seq[AtnConfig] =
   ## One configuration per alternative of `d` that `precedence` allows.
@@ -464,6 +477,23 @@ func seed(d: AtnDecisionData, stack, precedence: int): seq[AtnConfig] =
       d.alternativeIds[position] else: position
     result.add AtnConfig(state: state, alternative: alternative,
       stack: stack, precedence: precedence)
+
+func precedenceFilter(configs: seq[AtnConfig]): seq[AtnConfig] =
+  ## As ANTLR's `applyPrecedenceFilter`, for the start state of a precedence
+  ## loop: the exit's global FOLLOW leads back into a caller's loop of the
+  ## same rule, so a configuration of the exit that meets an operator
+  ## alternative's in the same state and context is dropped. This makes the
+  ## loop greedy, as full context does by taking the lowest alternative.
+  ## A `suppressed` one is kept: it left through a call of precedence 0,
+  ## which may continue inside an operator alternative of an outer loop, as
+  ## the middle `e` of `e : e (',' e)* '>>' e | ID ;` does.
+  var continuing = initHashSet[(int, int)]()
+  for c in configs:
+    if c.alternative != high(int): continuing.incl (c.state, c.stack)
+  for c in configs:
+    if c.alternative != high(int) or c.suppressed or
+        (c.state, c.stack) notin continuing:
+      result.add c
 
 proc sllTarget(cache: PredictionCache, source, kind: int,
     d: AtnDecisionData, decision, precedence: int,
@@ -486,7 +516,8 @@ proc sllTarget(cache: PredictionCache, source, kind: int,
     result = cache.dfaState(decision, precedence, @[])
     cache.resolve(result, if high(int) in d.alternativeIds: high(int) else: -2)
   else:
-    let configs = atnClosure(next, states, rules, cache.stopRules, cache.gss, cache)
+    let configs = atnClosure(next, states, rules, cache.stopRules,
+      cache.follows, cache.gss, cache)
     result = cache.dfaState(decision, precedence, configs)
     var survivors = initHashSet[int]()
     for c in configs: survivors.incl c.alternative
@@ -505,8 +536,11 @@ proc predictSll[K, L, T](p: ParserState[K, L, T], decision: int,
   cache.prepare(states, rules)
   var s = cache.dfaStarts.getOrDefault((decision, precedence), -1)
   if s < 0:
-    let configs = atnClosure(d.seed(cache.gss.bottom, precedence), states,
-      rules, cache.stopRules, cache.gss, cache)
+    let isPrecedence = high(int) in d.alternativeIds and d.minimums.len > 0
+    var configs = atnClosure(d.seed(cache.gss.bottom, precedence), states,
+      rules, cache.stopRules, cache.follows, cache.gss, cache,
+      if isPrecedence: d.rule else: -1)
+    if isPrecedence: configs = precedenceFilter(configs)
     s = cache.dfaState(decision, precedence, configs)
     cache.dfaStarts[(decision, precedence)] = s
   var offset = p.i
@@ -555,7 +589,7 @@ proc predictLl[K, L, T](p: var ParserState[K, L, T], decision: int,
     key.add $kind & ","
     if cache != nil and cache.entries.hasKey(key):
       return cache.entries[key]
-    configs = atnClosure(configs, states, rules, stopRules, gss, cache)
+    configs = atnClosure(configs, states, rules, stopRules, [], gss, cache)
     if kind == 0:
       var accepted = high(int)
       var hasAccepted = false
@@ -582,7 +616,7 @@ proc predictLl[K, L, T](p: var ParserState[K, L, T], decision: int,
           return alternative
       if expected.len == 0: p.failPrediction(offset, [0])
       p.failPrediction(offset, expected)
-    configs = atnClosure(next, states, rules, stopRules, gss, cache)
+    configs = atnClosure(next, states, rules, stopRules, [], gss, cache)
     var survivors = initHashSet[int]()
     for c in configs: survivors.incl c.alternative
     if survivors.len > 1 and conflicting(configs):
@@ -612,7 +646,7 @@ proc predict*[K, L, T](p: var ParserState[K, L, T], decision: int,
     precedence = 0): int =
   ## SLL first; retry with the active parser call stack when local context
   ## leaves multiple alternatives or cannot find a viable alternative.
-  if cache != nil and cache.fullContextOnly:
+  if p.fullContext or (cache != nil and cache.fullContextOnly):
     return p.predictLl(decision, states, decisions, rules, cache, precedence)
   let sllCache = if cache != nil: cache else: newPredictionCache()
   result = p.predictSll(decision, states, decisions, rules, sllCache, precedence)
@@ -786,16 +820,38 @@ proc initParserState*[K, L, T](tokens: seq[LexerToken[T]], src: string,
   for t in tokens:
     if not t.hidden: result.tokens.add t
 
-proc finish*[K, L, T](p: var ParserState[K, L, T], n: ParseNode[K, L, T],
-    d: var Diagnostics) =
+proc skipRest[K, L, T](p: var ParserState[K, L, T], n: ParseNode[K, L, T]) =
   ## After the start rule, whose node is `n`: any input left is an error, and
-  ## is skipped into an error node. Adds the syntax errors to `d`.
+  ## is skipped into an error node.
   if p.peek != T(0):
     p.expect([0])
     p.report()
     let err = p.errorNode
     while p.peek != T(0): p.skip(err)
     n.add err
+
+proc retryInFullContext*[K, L, T](p: var ParserState[K, L, T],
+    n: ParseNode[K, L, T]): bool =
+  ## After the start rule, whose node is `n`: whether to parse again from
+  ## the first token, in full context. SLL prediction can choose an
+  ## alternative before full context would see a syntax error, so with an
+  ## error the parse is redone, as in ANTLR's two-stage parsing, and errors
+  ## and recovery are those of full context. `p` is then reset for it.
+  p.skipRest(n)
+  if p.errors.len == 0 or p.fullContext: return false
+  var tokens = move p.tokens
+  p = initParserState[K, L, T](@[], p.source.data, p.names, p.ruleNames,
+    p.follows)
+  p.tokens = move tokens
+  p.fullContext = true
+  true
+
+proc finish*[K, L, T](p: var ParserState[K, L, T], n: ParseNode[K, L, T],
+    d: var Diagnostics) =
+  ## After the start rule, whose node is `n`, and `retryInFullContext`: any
+  ## input left is an error, and is skipped into an error node. Adds the
+  ## syntax errors to `d`.
+  p.skipRest(n)
   for e in p.errors: d.syntaxError(e)
 
 proc runParser*[K, L, T](tokens: seq[LexerToken[T]], src: string,
@@ -807,4 +863,5 @@ proc runParser*[K, L, T](tokens: seq[LexerToken[T]], src: string,
   ## the parser recovered from them.
   var p = initParserState[K, L, T](tokens, src, enumNames(T), ruleNames, follows)
   result = rule(p)
+  if p.retryInFullContext(result): result = rule(p)
   p.finish(result, d)
