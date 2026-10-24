@@ -1,0 +1,13 @@
+[grammar]
+grammar T;
+program : reset* EOF ;
+reset: 'break;' | 'continue;' | 'return;' ;
+
+[start]
+program
+
+[input]
+"break;continue;return;"
+
+[tree]
+(program (reset break;) (reset continue;) (reset return;))

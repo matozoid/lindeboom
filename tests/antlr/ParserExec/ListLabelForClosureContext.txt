@@ -1,0 +1,26 @@
+[grammar]
+grammar T;
+expression : 'a' ;
+ifStatement
+
+    : 'if' expression
+      ( ( 'then'
+ executableStatement*
+ elseIfStatement*
+ elseStatement?
+ 'end' 'if'
+        ) | executableStatement )
+    ;
+
+elseIfStatement
+    : 'else' 'if' expression 'then' executableStatement*
+    ;
+executableStatement : 'a' ;
+elseStatement : 'a' ;
+
+[start]
+expression
+
+[input]
+"a"
+

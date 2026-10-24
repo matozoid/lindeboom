@@ -1,0 +1,19 @@
+[grammar]
+grammar T;
+s
+
+
+  : r=a ;
+a : b 'x'
+  ;
+b : 'y'
+  ;
+
+[start]
+s
+
+[input]
+"yx"
+
+[tree]
+(s (a (b y) x))

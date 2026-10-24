@@ -1,7 +1,7 @@
 ---
 id: 28
 title: Prediction call stacks and the conflict test as in ANTLR 4
-status: in-progress
+status: done
 labels: [parser]
 depends: [17]
 ---
@@ -42,5 +42,8 @@ Two parts of issue 17's prediction differ from ANTLR 4 without saying so.
       `closure_`, so epsilon-only states no longer split groups.
 - [x] At the end of the input SLL and full context step over an explicit
       `EOF` (`parsegen_explicit_eof_stays_in_sll`).
-- [ ] Tests where SLL conflicts and LL resolves, and real ambiguities that
-      must pick the lowest alternative, compared with ANTLR's results
+- [x] Tests where SLL conflicts and LL resolves, and real ambiguities that
+      must pick the lowest alternative, compared with ANTLR's results: the
+      FullContextParsing descriptors and the ParserExec ones of issue 29
+      (AorA, IfIfElse, PredictionMode_LL, OpenDeviceStatement,
+      MultipleEOFHandling), in `tests/tantlr.nim`

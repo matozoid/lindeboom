@@ -11,6 +11,15 @@
 ##   predicates on them; LeftRecursion covers the same expressions), and
 ##   FullContextIF_THEN_ELSEParse_6, the same as _5.
 ## - LeftRecursion: SemPredFailOption (a predicate that fails).
+## - ParserExec: BuildParseTree_FALSE (there is no mode without a tree),
+##   IfIfElseNonGreedyBinding1 and _2 (non-greedy `??`), ParserProperty and
+##   PredicatedIfIfElse (semantic predicates, issue 22), and
+##   PredictionMode_SLL (there is no SLL-only mode; the full-context fallback
+##   gives PredictionMode_LL's tree).
+## - ParseTrees: AltNum (`contextSuperClass` and alternative numbers),
+##   ExtraToken, ExtraTokensAndAltLabels, NoViableAlt and Sync (trees after
+##   error recovery, which differs from ANTLR's), and
+##   TokenAndRuleContextString (prints the rule invocation stack).
 
 import std/[algorithm, assertions, os, strutils, tables]
 from std/unicode import runeLen

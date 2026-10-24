@@ -1,0 +1,17 @@
+[grammar]
+grammar T;
+s
+
+
+  : r=a ;
+a : ('x' | 'y')* 'z'
+  ;
+
+[start]
+s
+
+[input]
+"xyyxyxz"
+
+[tree]
+(s (a x y y x y x z))

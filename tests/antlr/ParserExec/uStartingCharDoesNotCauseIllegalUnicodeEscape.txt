@@ -1,0 +1,12 @@
+[grammar]
+grammar u;
+u : 'u' ;
+
+[start]
+u
+
+[input]
+"u"
+
+[tree]
+(u u)

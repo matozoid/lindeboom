@@ -1,0 +1,25 @@
+[grammar]
+grammar G;
+root
+    : continue+
+    ;
+continue
+    : for for?
+    | break=BREAK BREAK+ (for | IF)
+    | if=IF  if=IF*
+    | continue CONTINUE_
+    ;
+for: FOR;
+FOR: 'for ';
+BREAK: 'break ';
+IF: 'if ';
+CONTINUE_: 'continue';
+
+[start]
+root
+
+[input]
+"for for break break for if if for continue"
+
+[tree]
+(root (continue (for for ) (for for )) (continue break  break  (for for )) (continue if  if ) (continue (continue (for for )) continue))

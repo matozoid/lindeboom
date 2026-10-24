@@ -1,0 +1,13 @@
+[grammar]
+grammar T;
+program : addErrorListener* EOF ;
+addErrorListener: 'break;' | 'continue;' | 'return;' ;
+
+[start]
+program
+
+[input]
+"break;continue;return;"
+
+[tree]
+(program (addErrorListener break;) (addErrorListener continue;) (addErrorListener return;))

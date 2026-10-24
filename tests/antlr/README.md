@@ -25,3 +25,11 @@ Descriptors that print with actions instead of `toStringTree` were ported
 by hand, with the tree ANTLR's prediction gives: for the LeftRecursion
 ones with return values, the tree whose value the descriptor prints (`a=b+c`
 printed as `((a=b)+c)`, `i++*3` as 12).
+
+Where the start rule was not the first parser rule, it was moved first.
+The ParseTrees descriptors print `$r.ctx` from inside the start rule `s`,
+so their trees are wrapped in `(s ...)`. ParserExec descriptors that print
+tokens or text through actions were ported by hand with the tree ANTLR
+builds. In OpenDeviceStatement_Case3 ANTLR's start rule `statement`
+matches only a prefix of the input, as it does not end in `EOF`; here the
+start rule must match all of it, so the port starts at `program`.

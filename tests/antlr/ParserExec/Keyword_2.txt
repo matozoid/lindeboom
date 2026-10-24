@@ -1,0 +1,13 @@
+[grammar]
+grammar T;
+program : sempred* EOF ;
+sempred: 'break;' | 'continue;' | 'return;' ;
+
+[start]
+program
+
+[input]
+"break;continue;return;"
+
+[tree]
+(program (sempred break;) (sempred continue;) (sempred return;))

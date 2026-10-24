@@ -1,0 +1,28 @@
+[grammar]
+grammar Issue2301;
+
+SPACES: [ \t\r\n]+ -> skip;
+
+AT: 'AT';
+X : 'X';
+Y : 'Y';
+
+ID: [A-Z]+;
+
+expr
+: ID constant?
+| expr AT X
+| expr AT Y
+;
+
+constant
+: 'DUMMY'
+;
+
+
+[start]
+expr
+
+[input]
+"POINT AT X"
+

@@ -17,8 +17,9 @@ precedence climbing interact.
 ## Tasks
 
 - [x] All FullContextParsing descriptors
-- [ ] The ParserExec descriptors that don't need actions beyond what a
-      parse tree or error expectation can show
+- [x] The ParserExec descriptors that don't need actions beyond what a
+      parse tree or error expectation can show, and the ParseTrees and
+      Performance ones
 - [x] The LeftRecursion descriptors (expressions, suffixes, prefixes,
       associativity, ternaries, `PrecedenceFilterConsidersContext` variants)
 - [ ] The SemPredEvalParser descriptors on precedence; the others wait for
@@ -47,6 +48,14 @@ are in, either there or written out in `tantlr.nim`, and all pass with the
 prediction of issue 24. Left out, as `tantlr.nim` lists: SemPredFailOption
 (a failing predicate), ExprAmbiguity_1 and _2 (rule arguments), and
 FullContextIF_THEN_ELSEParse_6, the same as _5.
+
+44 of 50 ParserExec descriptors, 4 of 10 ParseTrees and all 7 Performance
+ones are in too. They found two bugs: with `('x' | 'x' 'y') EOF EOF`
+prediction at the end of the input stepped over only one `EOF`
+(MultipleEOFHandling), and a label such as `id_` gave an accessor that is
+not a Nim identifier (Labels). Left out, as `tantlr.nim` lists:
+no tree-less or SLL-only mode, non-greedy `??`, semantic predicates, and
+the ParseTrees trees after error recovery, which differs from ANTLR's.
 
 `newPredictionCache(fullContextOnly = true)` skips SLL and predicts every
 decision in full context; `fullContextOnly(a)` in `codegenhelpers` gives an

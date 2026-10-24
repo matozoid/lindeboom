@@ -1,0 +1,15 @@
+[grammar]
+grammar T;
+a : (ID|ATN)* ATN? ;
+ID : 'a'..'z'+ ;
+ATN : '0'..'9'+;
+WS : (' '|'\n') -> skip ;
+
+[start]
+a
+
+[input]
+""
+
+[tree]
+a

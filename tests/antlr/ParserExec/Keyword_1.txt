@@ -1,0 +1,13 @@
+[grammar]
+grammar T;
+program : state* EOF ;
+state: 'break;' | 'continue;' | 'return;' ;
+
+[start]
+program
+
+[input]
+"break;continue;return;"
+
+[tree]
+(program (state break;) (state continue;) (state return;))

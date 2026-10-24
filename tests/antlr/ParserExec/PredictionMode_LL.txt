@@ -1,0 +1,23 @@
+[grammar]
+grammar T;
+r
+   : (a b | a) EOF
+   ;
+a
+   : X Y?
+   ;
+b
+   : Y
+   ;
+X: 'X';
+Y: 'Y';
+WS  : [ \r\n\t]+ -> skip ;
+
+[start]
+r
+
+[input]
+"X Y"
+
+[tree]
+(r (a X) (b Y))

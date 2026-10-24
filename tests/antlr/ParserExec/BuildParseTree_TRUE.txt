@@ -1,0 +1,17 @@
+[grammar]
+grammar T;
+r : a b ;
+a : A ;
+b : B ;
+A : 'A';
+B : 'B';
+WS : [ \r\n\t]+ -> skip ;
+
+[start]
+r
+
+[input]
+"A B"
+
+[tree]
+(r (a A) (b B))

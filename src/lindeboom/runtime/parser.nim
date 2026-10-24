@@ -496,6 +496,24 @@ func finished(configs: openArray[AtnConfig]): seq[AtnConfig] =
   for c in configs:
     if c.state < 0 and c notin result: result.add c
 
+proc ending(configs: openArray[AtnConfig], states: openArray[AtnStateData],
+    rules: openArray[AtnRuleData], stopRules: openArray[int],
+    follows: openArray[seq[(int, bool)]], gss: Gss,
+    cache: PredictionCache): seq[AtnConfig] =
+  ## The configurations that leave the start rule at the end of the input:
+  ## at once, or after explicit `EOF`s, which as in ANTLR match the end of
+  ## the input again and again.
+  result = finished(configs)
+  var seen = initHashSet[AtnConfig]()
+  var current = advance(configs, states, 0)
+  while current.len > 0:
+    var fresh: seq[AtnConfig]
+    for c in atnClosure(current, states, rules, stopRules, follows, gss, cache):
+      if not seen.containsOrIncl(c): fresh.add c
+    for c in finished(fresh):
+      if c notin result: result.add c
+    current = advance(fresh, states, 0)
+
 proc expectedAtn(configs: openArray[AtnConfig], states: openArray[AtnStateData]): seq[int] =
   var expected = initHashSet[int]()
   for c in configs:
@@ -557,13 +575,15 @@ proc sllTarget(cache: PredictionCache, source, kind: int,
   ## alternatives that leave the start rule count, before or after an
   ## explicit `EOF`; the state is then resolved to the one of them, or to a
   ## full-context retry.
-  let next = advance(cache.dfaStates[source].configs, states, kind)
   var configs: seq[AtnConfig]
-  if next.len > 0:
-    configs = atnClosure(next, states, rules, cache.stopRules,
-      cache.follows, cache.gss, cache)
   if kind == 0:
-    configs = finished(cache.dfaStates[source].configs & configs)
+    configs = ending(cache.dfaStates[source].configs, states, rules,
+      cache.stopRules, cache.follows, cache.gss, cache)
+  else:
+    let next = advance(cache.dfaStates[source].configs, states, kind)
+    if next.len > 0:
+      configs = atnClosure(next, states, rules, cache.stopRules,
+        cache.follows, cache.gss, cache)
   if configs.len == 0:
     # No viable alternative. A loop exit is the useful recovery choice when
     # the caller's continuation cannot match: let the real parser report and
@@ -640,12 +660,9 @@ proc predictLl[K, L, T](p: var ParserState[K, L, T], decision: int,
     if kind == 0:
       # The lowest alternative that leaves the start rule, before or after
       # an explicit `EOF`.
-      var ending = finished(configs)
-      if next.len > 0:
-        ending.add finished(atnClosure(next, states, rules, stopRules, [],
-          gss, cache))
-      if ending.len > 0:
-        let accepted = min(ending.mapIt(it.alternative))
+      let ends = ending(configs, states, rules, stopRules, [], gss, cache)
+      if ends.len > 0:
+        let accepted = min(ends.mapIt(it.alternative))
         if cache != nil: cache.entries[key] = accepted
         return accepted
     if next.len == 0 or kind == 0:

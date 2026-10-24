@@ -1,0 +1,18 @@
+[grammar]
+grammar T;
+start : a* EOF;
+a
+  : label=subrule
+  | label='y'
+  ;
+subrule : 'x';
+WS : (' '|'\n') -> skip ;
+
+[start]
+start
+
+[input]
+"xy"
+
+[tree]
+(start (a (subrule x)) (a y))

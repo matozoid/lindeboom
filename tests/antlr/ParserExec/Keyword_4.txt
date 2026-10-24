@@ -1,0 +1,13 @@
+[grammar]
+grammar T;
+program : ruleIndexMap* EOF ;
+ruleIndexMap: 'break;' | 'continue;' | 'return;' ;
+
+[start]
+program
+
+[input]
+"break;continue;return;"
+
+[tree]
+(program (ruleIndexMap break;) (ruleIndexMap continue;) (ruleIndexMap return;))
