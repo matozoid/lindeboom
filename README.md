@@ -265,6 +265,9 @@ of them, as a `seq`. ANTLR's `+=` is written as plain `=`:
 A label cannot be one of the names of the tree API (`kind`, `edge`, `tok`,
 `sons`, `len`, `text`, `pos`, `items`, `treeRepr`). A label that is a Nim
 keyword is fine; its accessor is used with backticks: ``n.`type` ``.
+A label that is not a Nim identifier, or that Nim would take for another
+label or a name of the tree API, gets an accessor that is: `id_` gives
+`n.id`, and of `b1` and `b_1` the second gives `n.b_12`.
 Lexer rules cannot have labels.
 
 **Alternative labels.** `# name` after an alternative gives its nodes their

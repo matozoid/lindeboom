@@ -47,6 +47,7 @@ type
     altKinds*: seq[seq[int]]             ## per rule and alternative: node kind
     labels*: seq[string]                 ## element labels; 0 is ""
     labelIdents*: seq[string]            ## `lbNone`, `lbCond`, ...
+    accessorIdents*: seq[string]         ## the accessor of each label; 0 is ""
     labelIsList*: seq[bool]              ## can label several sons of a node
     labelIndex*: Table[string, int]
     isPrecRule*: seq[bool]               ## per rule
@@ -566,10 +567,14 @@ func countLabels(a: Analysis, e: GExpr, inherited: string,
 proc assignNames(a: var Analysis, d: var Diagnostics) =
   var kindIndex: Table[string, int]
   var kindUsed, ruleUsed, labelUsed: HashSet[string]
+  # Accessors are procs on `Node`, beside the tree API's.
+  var accessorUsed: HashSet[string]
+  for name in reservedLabels: accessorUsed.incl nimNormalize(name)
   a.kinds = @["token", "error"]
   a.kindIdents = @[uniqueIdent("nkToken", kindUsed), uniqueIdent("nkError", kindUsed)]
   a.labels = @[""]
   a.labelIdents = @[uniqueIdent("lbNone", labelUsed)]
+  a.accessorIdents = @[""]
   a.labelIsList = @[false]
   a.altKinds.setLen a.g.rules.len
   a.ruleIdents.setLen a.g.rules.len
@@ -591,6 +596,7 @@ proc assignNames(a: var Analysis, d: var Diagnostics) =
           a.labelIndex[e.label] = a.labels.len
           a.labels.add e.label
           a.labelIdents.add uniqueIdent("lb" & capitalized(e.label), labelUsed)
+          a.accessorIdents.add uniqueIdent(e.label, accessorUsed)
           a.labelIsList.add false
       var counts: Table[string, int]
       a.countLabels(alt.body, "", counts)

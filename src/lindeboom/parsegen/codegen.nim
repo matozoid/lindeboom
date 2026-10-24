@@ -326,10 +326,10 @@ proc genParserModule*(a: Analysis, grammarFile: string,
 
   for k in 1 .. a.labels.high:
     if a.labelIsList[k]:
-      g.line(0, "func " & procName(a.labels[k]) & "*(n: Node): seq[Node] = n.sonsWith(" &
+      g.line(0, "func " & procName(a.accessorIdents[k]) & "*(n: Node): seq[Node] = n.sonsWith(" &
         a.labelIdents[k] & ")")
     else:
-      g.line(0, "func " & procName(a.labels[k]) & "*(n: Node): Node = n.son(" &
+      g.line(0, "func " & procName(a.accessorIdents[k]) & "*(n: Node): Node = n.son(" &
         a.labelIdents[k] & ")")
   if a.labels.len > 1: g.s.add "\n"
 

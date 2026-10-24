@@ -187,4 +187,26 @@ for f in commandLineParams():
   let got = runDriver(compile(dir, standalone = false), dir, @["virtual f;", "g;"])
   doAssert got == @["true true f\n", "false false g\n"], $got
 
+block parsecodegen_label_accessor_names:
+  # Labels that are not Nim identifiers, or that Nim would take for another
+  # label or the tree API, get accessors that are.
+  let dir = tmp / "accessors"
+  createDir(dir)
+  let grammarFile = dir / "names.ldb"
+  writeFile(grammarFile, "grammar Names;\n" &
+    "s : id_=ID a__b=ID b1=ID b_1=ID te_xt=ID ;\n" &
+    "ID : [a-z]+ ;\nWS : ' ' -> skip ;\n")
+  discard generate(Case(grammarFile: grammarFile), dir, standalone = false)
+  writeFile(dir / "driver.nim", """
+import std/os
+import ./names_parser
+
+for f in commandLineParams():
+  let n = parseS(readFile(f)).tree
+  echo n.id.text, n.a_b.text, n.b1.text, n.b_12.text, n.te_xt2.text, n.text
+  stdout.write "----\n"
+""")
+  let got = runDriver(compile(dir, standalone = false), dir, @["p q r s t"])
+  doAssert got == @["pqrstp q r s t\n"], $got
+
 removeDir(tmp)
