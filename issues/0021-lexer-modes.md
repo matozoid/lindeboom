@@ -75,7 +75,8 @@ the runtime, shared by generated lexers and `lindeboom parse`.
   recovery see the input. Out of scope.
 
 - Modes do not solve constructs that need counting (`[==[`, heredoc
-  terminators). Those still need bounded rule expansion or a lexer hook.
+  terminators). Those still need bounded rule expansion or a lexer
+  scanner hook (#30).
 
 - Interactions to settle: hidden tokens and the indentation filter keep
   working per mode; `skip` can cross a mode boundary; EOF pops every open

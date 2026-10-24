@@ -3,88 +3,87 @@ id: 22
 title: Semantic predicates
 status: open
 labels: [parser, grammar]
-depends: [17]
+depends: [17, 30]
 ---
 
 Support semantic predicates so a grammar can reject an alternative based on
-the tokens seen so far. Today target code in a grammar is rejected, and there
-is no way to express context-sensitive choices that the ALL(*) lookahead
-alone cannot settle. ANTLR 4's `{ ... }?` is the reference for the use cases,
-but arbitrary target code is not the surface (see Design).
+context that the ALL(*) lookahead alone cannot settle. Today target code in
+a grammar is rejected. ANTLR 4's `{ ... }?` is the reference for the use
+cases and for how predicates take part in prediction; the surface is a
+named predicate hook from #30, not target code in the grammar.
 
-The main design question is how predicates work in both generated parsers and
-the interpreter without allowing arbitrary actions.
-
-- [ ] Decide the supported predicate expression: a fixed, side-effect-free
-      language over the current token, `next`/`prev`, and labels already
-      matched (see Design).
-- [ ] Parse predicates in parser rules, and decide whether lexer predicates are
-      in scope. Keep actions out of scope.
-- [ ] Represent predicates in the AST with their source position and text.
-- [ ] Check placement and types, and reject anything outside the expression
-      language.
-- [ ] Evaluate predicates during prediction: prune failing alternatives before
-      committing, without side effects, and reuse cached results where safe.
-- [ ] Emit predicates in generated parsers at the point where their alternative
-      is considered.
-- [ ] Give the interpreter an equivalent evaluation path, or reject predicates
-      there with a clear message. `lindeboom parse` must not silently disagree
-      with generated parsers.
-- [ ] Test gated alternatives, predicates interacting with ALL(*) decisions and
-      error recovery, lexer predicates if supported, and generated/interpreter
-      parity.
-- [ ] Document the syntax and limitations, and remove semantic predicates from
-      the unsupported list.
+- [ ] Predicate references in parser rules (syntax from #30), with their
+      source position; checks for placement
+- [ ] Prediction: drop alternatives whose predicate fails before
+      committing; cached SLL states where a predicated alternative survives
+      hold the predicate instead of a decision (see Design)
+- [ ] Full-context prediction and error recovery with predicates: what a
+      decision reports when every viable alternative's predicate fails
+- [ ] Generated parsers call the predicate hook where its alternative is
+      considered
+- [ ] `lindeboom parse` runs grammars with predicates through #30's compiled
+      driver, so it cannot disagree with generated parsers
+- [ ] Tests: gated alternatives, predicates in ALL(*) decisions, a predicate
+      reading `State` set by an action, failing predicates in recovery, and
+      the 25 remaining SemPredEvalParser descriptors (#29)
+- [ ] Document the syntax and limitations, and remove semantic predicates
+      from the unsupported list
 
 ## Design
 
-The goal is a predicate that is data, not code: no Nim, no method calls, no
-host callbacks, and nothing the interpreter cannot evaluate. That keeps
-generated parsers and `lindeboom parse` on one path and makes predicates
-side-effect free and cacheable.
-
-A predicate is a boolean expression over facts the parser already has:
-
-- the current token: type, text, or `EOF`;
-- `next` and `look(k)`: type or text of the token `k` ahead;
-- `prev`: the previous token, for lexer-ish decisions in parser rules;
-- labels already matched in the rule, by type or text.
-
-Sketch:
+A predicate is a Nim `func` in the grammar's hooks file (#30), referred to
+by name:
 
 ```antlr
-prefixexp : [next != OP] NAME ( '[' exp ']' | '.' NAME )* | ... ;
-literal   : signed_number [next != '+' and next != '-'] | ... ;
+prefixexp : ?isFunctionCall NAME ( '[' exp ']' | '.' NAME )* | ... ;
 ```
 
-No assignment, no calls, no arbitrary member access. If a check cannot be
-written in this language it is a grammar error, not an escape hatch.
+```nim
+func isFunctionCall*(p: PredicateView[State]): bool =
+  p.look(2).kind != OP
+```
 
-What this covers:
+Being a `func`, it cannot have side effects, so prediction may evaluate it
+on alternatives it then discards, and any number of times. It reads the
+lookahead, the tokens and labels already matched in its rule, the rule
+stack, and the user `State` that actions (#30) write. That last part
+covers C's typedef table, which a fixed expression language could not.
 
-- Lua's `IsFunctionCall()` is `LT(2) != OP`; a `next` guard is enough.
-- Python 3's `CannotBePlusMinus` / `CannotBeDotLpEq` are stubs in the
-  reference grammar and are really next-token checks.
-- C's `IsSomethingOfTypeName` / `IsCast` need a typedef symbol table. Keep
-  symbol-table predicates out of scope rather than import actions; such
-  grammars need rewriting (parse the ambiguity, resolve it outside the
-  parser) or stay unsupported.
+### Prediction
 
-Fallbacks that are not predicates:
+The SLL DFA cache assumes a decision depends only on the tokens ahead. A
+predicate reading `State` breaks that, so, as in ANTLR:
 
-- #6 ordered speculation already resolves some same-prefix choices.
-- Lexer-y decisions (regex vs division, heredoc versus `<<`) belong in #21
-  state, not here.
-- Resolving an ambiguous parse in a host-side post-pass is possible, but it
-  is a separate API and a tree-shape problem; not part of this issue.
+- Closure records, per configuration, the predicates passed on the way
+  from the decision; a predicate after the first token of its alternative
+  is not evaluated during prediction (ANTLR's rule for actions in the
+  middle of an alternative applies to predicates past the decision).
+- A DFA state whose configurations still disagree on the alternative only
+  because of predicates is stored with the predicate per alternative, not
+  with a decision. Reaching it evaluates the predicates in alternative
+  order each time; results are never cached.
+- States without predicated alternatives are cached as now, so grammars
+  without predicates pay nothing.
+- If every surviving alternative's predicate fails, the decision reports
+  no viable alternative, like a token mismatch.
 
-Rejected: named predicates bound by the host program. They keep the grammar
-code-free, but `lindeboom parse` can no longer run the grammar standalone and
-"generated and interpreted agree" is only testable when the hooks exist.
+### Earlier design, dropped
 
-Lexer predicates are out of scope for now: the state they test (`isLDelim`,
-`opened`) is either configuration or lexer state, which #21 handles. Adding
-the same expression language to the lexer runtime is a separate decision.
+This issue first proposed a built-in, side-effect-free expression language
+(`[next != OP]`) so the interpreter could evaluate predicates itself, and
+rejected named predicates bound by the host program because `lindeboom
+parse` could then no longer run the grammar standalone. #30 removes that
+objection: for a grammar with hooks, `lindeboom parse` compiles and runs
+the generated parser, so it and generated parsers run the same code. A Nim
+`func` is then simpler than a new language and covers more (the symbol
+table case), and Lua's `IsFunctionCall` is one line in it.
+
+### Out of scope
+
+- Lexer predicates (`isLDelim`, `opened`) belong to #30's lexer hooks and
+  #21's modes.
+- Resolving an ambiguous parse in a host-side post-pass is a separate API
+  and a tree-shape problem.
 
 ## Sample grammars
 
@@ -128,8 +127,8 @@ symbol table:
       ;
   ```
 
-  This is the upper bound: if predicates are restricted to the current
-  token and labels already matched, these rules need rewriting instead.
+  This is the upper bound. With #30, actions on declarations record
+  typedef names in `State`, and these predicates read it.
 
 - [Python3Parser.g4](https://github.com/antlr/grammars-v4/blob/master/python/python3/Python3Parser.g4)
   — two alternatives with the same token prefix but different meanings:
@@ -153,5 +152,4 @@ symbol table:
   — lexer predicates selecting delimiters and mode switches, e.g.
   `LDELIM : . { this.isLDelim() }? -> mode(Inside)` and
   `LBRACE : LBrace { this.startsSubTemplate() }? -> mode(SubTemplate)`.
-  If lexer predicates stay out of scope, this grammar shows what that
-  costs.
+  These are #30's lexer hooks, not parser predicates.
