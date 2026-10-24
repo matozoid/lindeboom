@@ -45,7 +45,8 @@ type
 
   PredictionCache* = ref object
     entries: Table[string, int] ## full-context prediction results
-    dfaIndices: Table[string, int]
+    dfaIndices: Table[DfaKey, int]
+    dfaStarts: Table[(int, int), int] ## start state by decision and precedence
     dfaStates: seq[PredictionDfaState]
     gss: Gss
     stopRules: seq[int] ## rule whose stop state each ATN state is, or -1
@@ -115,9 +116,16 @@ type
     sets: seq[seq[int]]
     setIndices: Table[seq[int], int]
 
+  DfaKey = object
+    decision, precedence: int
+    configs: seq[AtnConfig] ## sorted
+
   PredictionDfaState = object
+    ## A closed set of SLL configurations. A resolved state needs no more
+    ## lookahead: its `result` is an alternative, or -2 for a full-context
+    ## retry.
     configs: seq[AtnConfig]
-    transitions: Table[int, int]
+    transitions: Table[int, int] ## next state by token kind
     result: int
     resolved: bool
 
@@ -239,7 +247,7 @@ func peek*[K, L, T](p: ParserState[K, L, T]): T = p.tokens[p.i].kind
 
 proc newPredictionCache*(trackWork = false): PredictionCache =
   PredictionCache(entries: initTable[string, int](),
-    dfaIndices: initTable[string, int](),
+    dfaIndices: initTable[DfaKey, int](), dfaStarts: initTable[(int, int), int](),
     gss: Gss(indices: initTable[GssKey, int](),
       setIndices: initTable[seq[int], int]()), trackWork: trackWork)
 
@@ -247,27 +255,59 @@ func predictionWork*(cache: PredictionCache): int =
   ## Number of ATN configurations processed by predictions using this cache.
   cache.work
 
-proc configSetKey(decision, precedence: int,
-    configs: openArray[AtnConfig]): string =
-  var items: seq[string]
-  for c in configs:
-    items.add $c.state & "," & $c.alternative & "," & $c.stack & "," &
-      $c.precedence
-  items.sort()
-  result = $decision & ":" & $precedence & "|" & items.join(";")
-
-proc dfaState(cache: PredictionCache, decision, precedence: int,
-    configs: seq[AtnConfig]): int =
-  let key = configSetKey(decision, precedence, configs)
-  if key in cache.dfaIndices: return cache.dfaIndices[key]
-  result = cache.dfaStates.len
-  cache.dfaIndices[key] = result
-  cache.dfaStates.add PredictionDfaState(configs: configs,
-    transitions: initTable[int, int]())
-
 func `==`(a, b: AtnConfig): bool =
   a.state == b.state and a.alternative == b.alternative and
     a.stack == b.stack and a.precedence == b.precedence
+
+func hash(c: AtnConfig): Hash =
+  result = hash(c.state)
+  result = result !& hash(c.alternative)
+  result = result !& hash(c.stack)
+  result = result !& hash(c.precedence)
+  result = !$result
+
+func cmp(a, b: AtnConfig): int =
+  cmp((a.state, a.alternative, a.stack, a.precedence),
+    (b.state, b.alternative, b.stack, b.precedence))
+
+func `==`(a, b: DfaKey): bool =
+  a.decision == b.decision and a.precedence == b.precedence and
+    a.configs == b.configs
+
+func hash(k: DfaKey): Hash =
+  result = hash(k.decision)
+  result = result !& hash(k.precedence)
+  result = result !& hash(k.configs)
+  result = !$result
+
+func needsFullContext(configs: openArray[AtnConfig]): bool =
+  ## Whether one alternative has left the decision's rule while another is
+  ## still in it: without the caller's context SLL cannot tell them apart.
+  var completed, continuing = initHashSet[int]()
+  for c in configs:
+    if c.state < 0: completed.incl c.alternative
+    else: continuing.incl c.alternative
+  for alternative in completed:
+    for other in continuing:
+      if alternative != other: return true
+
+proc dfaState(cache: PredictionCache, decision, precedence: int,
+    configs: seq[AtnConfig]): int =
+  ## The state for the closed `configs`, added if it is new.
+  let key = DfaKey(decision: decision, precedence: precedence,
+    configs: configs.sorted(cmp))
+  result = cache.dfaIndices.getOrDefault(key, -1)
+  if result < 0:
+    result = cache.dfaStates.len
+    cache.dfaIndices[key] = result
+    let retry = needsFullContext(configs)
+    cache.dfaStates.add PredictionDfaState(configs: key.configs,
+      transitions: initTable[int, int](), resolved: retry,
+      result: if retry: -2 else: 0)
+
+proc resolve(cache: PredictionCache, state, alternative: int) =
+  cache.dfaStates[state].resolved = true
+  cache.dfaStates[state].result = alternative
 
 func `==`(a, b: GssKey): bool =
   a.returnState == b.returnState and a.parent == b.parent and
@@ -401,73 +441,116 @@ proc expectedAtn(configs: openArray[AtnConfig], states: openArray[AtnStateData])
   result = toSeq(expected.items)
   result.sort()
 
-proc predictOne[K, L, T](p: var ParserState[K, L, T], decision: int,
-    states: openArray[AtnStateData], decisions: openArray[AtnDecisionData],
-    rules: openArray[AtnRuleData], cache: PredictionCache = nil,
-    precedence = 0, fullContext = false): int =
-  ## Predicts once in local (SLL) or caller (LL) context. -2 means SLL needs
-  ## full-context retry.
-  let d = decisions[decision]
-  var sllCache = cache
-  if not fullContext and sllCache == nil: sllCache = newPredictionCache()
-  var activeCache = if fullContext: cache else: sllCache
-  if activeCache == nil: activeCache = newPredictionCache()
-  let gss = activeCache.gss
-  if activeCache.stopRules.len != states.len:
-    activeCache.stopRules = newSeq[int](states.len)
-    for id in activeCache.stopRules.mitems: id = -1
+proc prepare(cache: PredictionCache, states: openArray[AtnStateData],
+    rules: openArray[AtnRuleData]) =
+  ## Fills in the rule whose stop state each ATN state is.
+  if cache.stopRules.len != states.len:
+    cache.stopRules = newSeq[int](states.len)
+    for id in cache.stopRules.mitems: id = -1
     for rule, info in rules:
-      if info.start != info.stop: activeCache.stopRules[info.stop] = rule
-  template stopRules: untyped = activeCache.stopRules
-  var context = gss.bottom
-  if fullContext:
-    for i, returnState in p.returnStates:
-      # On return from this frame, restore the caller's precedence. The
-      # current frame's precedence applies only while executing this rule.
-      let callerPrecedence = if i > 0: p.precedences[i - 1] else: p.precedences[i]
-      context = gss.single(gss.push(returnState, context, callerPrecedence))
-  var configs: seq[AtnConfig]
+      if info.start != info.stop: cache.stopRules[info.stop] = rule
+
+func seed(d: AtnDecisionData, stack, precedence: int): seq[AtnConfig] =
+  ## One configuration per alternative of `d` that `precedence` allows.
   for position, state in d.alternatives:
     let minimum = if position < d.minimums.len: d.minimums[position] else: -1
     if minimum >= 0 and precedence > minimum: continue
     let alternative = if position < d.alternativeIds.len:
       d.alternativeIds[position] else: position
-    configs.add AtnConfig(state: state, alternative: alternative,
-      stack: context, precedence: precedence)
-  var useDfa = not fullContext
+    result.add AtnConfig(state: state, alternative: alternative,
+      stack: stack, precedence: precedence)
+
+proc sllTarget(cache: PredictionCache, source, kind: int,
+    d: AtnDecisionData, decision, precedence: int,
+    states: openArray[AtnStateData], rules: openArray[AtnRuleData]): int =
+  ## The DFA state after token `kind` in `source`, computed over the ATN
+  ## and added with its edge.
+  var next: seq[AtnConfig]
+  for c in cache.dfaStates[source].configs:
+    if c.state < 0: continue
+    for edge in states[c.state].edges:
+      if edge.kind == atTokens and kind in edge.tokens:
+        var advanced = c
+        advanced.state = edge.target
+        next.add advanced
+  if next.len == 0:
+    # No viable alternative. A loop exit is the useful recovery choice when
+    # the caller's continuation cannot match: let the real parser report and
+    # recover at that call site instead of turning prediction failure into a
+    # nested rule error. Otherwise full context reports the error.
+    result = cache.dfaState(decision, precedence, @[])
+    cache.resolve(result, if high(int) in d.alternativeIds: high(int) else: -2)
+  else:
+    let configs = atnClosure(next, states, rules, cache.stopRules, cache.gss, cache)
+    result = cache.dfaState(decision, precedence, configs)
+    var survivors = initHashSet[int]()
+    for c in configs: survivors.incl c.alternative
+    if survivors.len > 1 and conflicting(configs):
+      cache.resolve(result, -2)
+    elif survivors.len == 1:
+      for alternative in survivors: cache.resolve(result, alternative)
+  cache.dfaStates[source].transitions[kind] = result
+
+proc predictSll[K, L, T](p: ParserState[K, L, T], decision: int,
+    states: openArray[AtnStateData], decisions: openArray[AtnDecisionData],
+    rules: openArray[AtnRuleData], cache: PredictionCache, precedence: int): int =
+  ## Predicts in local context by walking the decision's DFA, extending it
+  ## over the ATN where an edge is missing. -2 means a full-context retry.
+  let d = decisions[decision]
+  cache.prepare(states, rules)
+  var s = cache.dfaStarts.getOrDefault((decision, precedence), -1)
+  if s < 0:
+    let configs = atnClosure(d.seed(cache.gss.bottom, precedence), states,
+      rules, cache.stopRules, cache.gss, cache)
+    s = cache.dfaState(decision, precedence, configs)
+    cache.dfaStarts[(decision, precedence)] = s
   var offset = p.i
-  var key = $decision & ":" & $precedence & ":" & $fullContext & ":"
-  if fullContext:
-    for i, state in p.returnStates:
-      key.add $state & ":" & $p.precedences[i] & ","
+  while not cache.dfaStates[s].resolved:
+    let kind = ord(p.tokens[offset].kind)
+    if kind == 0:
+      # At the end of the input only the alternatives that left the rule
+      # are left; one of them, or a retry.
+      var accepted = initHashSet[int]()
+      for c in cache.dfaStates[s].configs:
+        if c.state < 0: accepted.incl c.alternative
+      if accepted.len != 1: return -2
+      for alternative in accepted.items: return alternative
+    var target = cache.dfaStates[s].transitions.getOrDefault(kind, -1)
+    if target < 0:
+      target = cache.sllTarget(s, kind, d, decision, precedence, states, rules)
+    s = target
+    inc offset
+  cache.dfaStates[s].result
+
+proc predictLl[K, L, T](p: var ParserState[K, L, T], decision: int,
+    states: openArray[AtnStateData], decisions: openArray[AtnDecisionData],
+    rules: openArray[AtnRuleData], cache: PredictionCache = nil,
+    precedence = 0): int =
+  ## Predicts in the context of the active parser call stack.
+  let d = decisions[decision]
+  var activeCache = cache
+  if activeCache == nil: activeCache = newPredictionCache()
+  activeCache.prepare(states, rules)
+  let gss = activeCache.gss
+  template stopRules: untyped = activeCache.stopRules
+  var context = gss.bottom
+  for i, returnState in p.returnStates:
+    # On return from this frame, restore the caller's precedence. The
+    # current frame's precedence applies only while executing this rule.
+    let callerPrecedence = if i > 0: p.precedences[i - 1] else: p.precedences[i]
+    context = gss.single(gss.push(returnState, context, callerPrecedence))
+  var configs = d.seed(context, precedence)
+  var offset = p.i
+  var key = $decision & ":" & $precedence & ":true:"
+  for i, state in p.returnStates:
+    key.add $state & ":" & $p.precedences[i] & ","
   key.add "|"
   while true:
     let kind = ord(p.tokens[offset].kind)
     key.add $kind & ","
-    if fullContext and cache != nil and cache.entries.hasKey(key):
+    if cache != nil and cache.entries.hasKey(key):
       return cache.entries[key]
-    configs = atnClosure(configs, states, rules, stopRules, gss,
-      if fullContext: cache else: sllCache)
-    var dfaId = -1
-    if useDfa:
-      dfaId = sllCache.dfaState(decision, precedence, configs)
-      if sllCache.dfaStates[dfaId].resolved:
-        return sllCache.dfaStates[dfaId].result
-      if kind in sllCache.dfaStates[dfaId].transitions:
-        let target = sllCache.dfaStates[dfaId].transitions[kind]
-        configs = sllCache.dfaStates[target].configs
-        inc offset
-        continue
-    if not fullContext:
-      var completed = initHashSet[int]()
-      var continuing = initHashSet[int]()
-      for c in configs:
-        if c.state < 0: completed.incl c.alternative
-        else: continuing.incl c.alternative
-      for alternative in completed.items:
-        for other in continuing.items:
-          if alternative != other:
-            return -2
+    configs = atnClosure(configs, states, rules, stopRules, gss, cache)
     if kind == 0:
       var accepted = high(int)
       var hasAccepted = false
@@ -476,16 +559,8 @@ proc predictOne[K, L, T](p: var ParserState[K, L, T], decision: int,
           accepted = min(accepted, c.alternative)
           hasAccepted = true
       if hasAccepted:
-        if not fullContext and accepted != high(int):
-          var acceptedAlts = initHashSet[int]()
-          for c in configs:
-            if c.state < 0: acceptedAlts.incl c.alternative
-          if acceptedAlts.len > 1:
-            return -2
-        if fullContext and cache != nil: cache.entries[key] = accepted
+        if cache != nil: cache.entries[key] = accepted
         return accepted
-      if not fullContext:
-        return -2
     let expected = expectedAtn(configs, states)
     var next: seq[AtnConfig]
     for c in configs:
@@ -496,46 +571,23 @@ proc predictOne[K, L, T](p: var ParserState[K, L, T], decision: int,
           advanced.state = edge.target
           next.add advanced
     if next.len == 0:
-      # A loop exit is the useful recovery choice when the caller's
-      # continuation cannot match: let the real parser report and recover at
-      # that call site instead of turning prediction failure into a nested
-      # rule error.
+      # A loop exit is the useful recovery choice, as in `sllTarget`.
       for alternative in d.alternativeIds:
         if alternative == high(int):
           return alternative
-      if not fullContext:
-        return -2
       if expected.len == 0: p.failPrediction(offset, [0])
       p.failPrediction(offset, expected)
-    configs = atnClosure(next, states, rules, stopRules, gss,
-      if fullContext: cache else: sllCache)
+    configs = atnClosure(next, states, rules, stopRules, gss, cache)
     var survivors = initHashSet[int]()
     for c in configs: survivors.incl c.alternative
     if survivors.len > 1 and conflicting(configs):
-      if not fullContext:
-        if useDfa:
-          let target = sllCache.dfaState(decision, precedence, configs)
-          sllCache.dfaStates[dfaId].transitions[kind] = target
-          sllCache.dfaStates[target].result = -2
-          sllCache.dfaStates[target].resolved = true
-        return -2
       let lowest = min(toSeq(survivors.items))
       if cache != nil: cache.entries[key] = lowest
       return lowest
     if survivors.len == 1 and kind != 0:
       for alternative in survivors.items:
-        if fullContext and cache != nil: cache.entries[key] = alternative
-        if useDfa:
-          let target = sllCache.dfaState(decision, precedence, configs)
-          sllCache.dfaStates[dfaId].transitions[kind] = target
-          sllCache.dfaStates[target].result = alternative
-          sllCache.dfaStates[target].resolved = true
+        if cache != nil: cache.entries[key] = alternative
         return alternative
-    if not fullContext:
-      let target = sllCache.dfaState(decision, precedence, configs)
-      sllCache.dfaStates[dfaId].transitions[kind] = target
-      inc offset
-      continue
     if kind == 0:
       var accepted = high(int)
       var hasAccepted = false
@@ -555,10 +607,10 @@ proc predict*[K, L, T](p: var ParserState[K, L, T], decision: int,
     precedence = 0): int =
   ## SLL first; retry with the active parser call stack when local context
   ## leaves multiple alternatives or cannot find a viable alternative.
-  result = p.predictOne(decision, states, decisions, rules, cache, precedence)
+  let sllCache = if cache != nil: cache else: newPredictionCache()
+  result = p.predictSll(decision, states, decisions, rules, sllCache, precedence)
   if result == -2:
-    result = p.predictOne(decision, states, decisions, rules, cache,
-      precedence, fullContext = true)
+    result = p.predictLl(decision, states, decisions, rules, cache, precedence)
 
 proc failPrediction*[K, L, T](p: var ParserState[K, L, T], at: int,
     expected: openArray[int]) {.noreturn.} =

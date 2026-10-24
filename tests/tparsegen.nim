@@ -349,6 +349,22 @@ block parsegen_ambiguous_loop_work_is_bounded:
       doAssert work <= previous * 5, $previous & " -> " & $work
     previous = work
 
+block parsegen_warm_dfa_does_no_atn_work:
+  # SLL predictions walk the cached DFA; only a missing edge looks at the ATN.
+  var (a, t, _) = analyzed(g("s : a* ;\na : ID ID 'x' | ID ID 'y' ;"))
+  a.predictionCache = newPredictionCache(trackWork = true)
+  var work: seq[int]
+  for size in [100, 100, 1000]:
+    var input = ""
+    for i in 0 ..< size: input.add(if i mod 2 == 0: "p q x " else: "p q y ")
+    var diagnostics = Diagnostics(filename: "input")
+    let before = a.predictionCache.predictionWork
+    let n = a.interpret(tokenize[int](t, input, diagnostics), input,
+      a.parserRules[0], diagnostics)
+    doAssert n != nil and not diagnostics.hasErrors, $diagnostics.items
+    work.add a.predictionCache.predictionWork - before
+  doAssert work[0] < 100 and work[1] == 0 and work[2] == 0, $work
+
 block parsegen_prediction_loops:
   let rules = "s : ID (',' ID)* ','? ;"
   expectTree(rules, "a, b,", """

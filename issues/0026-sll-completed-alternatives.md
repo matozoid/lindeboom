@@ -15,6 +15,12 @@ full-LL prediction on every call. With
 `s : ('$' a | '@' b)* ; a : e ID ; b : e INT ID ; e : INT | ;` a repeat parse
 of the same input costs 950 configurations against 972 the first time.
 
+Every precedence rule hits this on every operator: the loop decision's exit
+alternative is the rule's stop state, so it completes at once while the
+operator alternatives continue. With
+`e : e '*' e | e '+' e | e '+' '+' | INT ;` a repeat parse still does 528
+configurations of full-LL work per 100 operators after issue 24.
+
 ANTLR 4 keeps going in SLL: a configuration in a rule stop state with an
 empty context can be followed by anything, it stays in the set, and only an
 SLL conflict among the remaining alternatives sends the decision to full LL.
@@ -26,5 +32,6 @@ SLL conflict among the remaining alternatives sends the decision to full LL.
       ANTLR's `allConfigsInRuleStopStates`)
 - [ ] Record the outcome in the DFA, including "needs full LL", so the next
       prediction from that state doesn't redo it
-- [ ] Test: a context-sensitive decision like the one above is cheap on a
-      warm cache
+- [ ] Test: a context-sensitive decision like the one above, and a
+      precedence loop decision, do no ATN work on a warm cache (as
+      `parsegen_warm_dfa_does_no_atn_work` in `tparsegen`)
