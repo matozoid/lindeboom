@@ -294,10 +294,11 @@ var failures: seq[string]
 
 proc checkConverted(c: Converted, input, expected, got: string) =
   ## `got` is what the driver prints: diagnostics, then the tree.
-  let tree = lispTree(got)
-  if got.contains("error:") or (expected.len > 0 and tree != expected):
-    failures.add c.name & " " & input.escape & ":\n" & got & "\n" & tree &
-      "\nexpected " & expected
+  if got.contains("error:"):
+    failures.add c.name & " " & input.escape & ":\n" & got
+  elif expected.len > 0 and lispTree(got) != expected:
+    failures.add c.name & " " & input.escape & ":\n" & got & "\n" &
+      lispTree(got) & "\nexpected " & expected
 
 let convertedCases = converted()
 
