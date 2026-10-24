@@ -1,7 +1,7 @@
 ---
 id: 28
 title: Prediction call stacks and the conflict test as in ANTLR 4
-status: open
+status: in-progress
 labels: [parser]
 depends: [17]
 ---
@@ -26,8 +26,21 @@ Two parts of issue 17's prediction differ from ANTLR 4 without saying so.
 ## Tasks
 
 - [ ] Decide: port ANTLR's prediction contexts and merge, or keep the set
-      representation and document why it is equivalent where it matters
-- [ ] `conflicting` split into the SLL and LL tests ANTLR uses, with the
-      right comments
+      representation and document why it is equivalent where it matters.
+      `union` does not merge two frames with the same return state into one
+      with the union of their parents, so equal sets of stacks can get
+      different ids. Groups are then finer than ANTLR's: never a wrong
+      choice, but full context can need more lookahead to settle.
+- [x] Full context stops as ANTLR's `resolvesToJustOneViableAlt` does
+      (`settled`): taking the lowest alternative once every group conflicts
+      could pick an alternative whose configurations all die later, as
+      `x y y c` in `parsegen_full_context_waits_for_one_lowest_alternative`.
+- [x] SLL keeps the stricter `conflicting` test, with a comment saying how
+      it differs from `hasSLLConflictTerminatingPrediction` and why that
+      is safe.
+- [x] Closure keeps only configurations that can match a token, as ANTLR's
+      `closure_`, so epsilon-only states no longer split groups.
+- [x] At the end of the input SLL and full context step over an explicit
+      `EOF` (`parsegen_explicit_eof_stays_in_sll`).
 - [ ] Tests where SLL conflicts and LL resolves, and real ambiguities that
       must pick the lowest alternative, compared with ANTLR's results

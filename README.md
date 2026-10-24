@@ -363,6 +363,19 @@ input fails to match it, so input with a syntax error is parsed a second
 time with the call context in every prediction. Errors and recovery are
 those of the second parse.
 
+Where prediction differs from ANTLR 4, it gives the same parse of valid
+input and aims to do better:
+
+- ANTLR's default reports errors from the first look, which can differ from
+  what the call context would have found; the two-stage parse is something
+  an ANTLR user sets up by hand.
+- A failed prediction reports the tokens that could have come next at the
+  farthest token it read, instead of "no viable alternative".
+- The first look hands a choice to the call context only when no more
+  lookahead can separate the alternatives, where ANTLR does so at the first
+  sign of a conflict. Lookahead without the context is cached and shared by
+  every call site.
+
 ## The generated code
 
 `lindeboom gen grammar.ldb` writes two modules, named after the grammar

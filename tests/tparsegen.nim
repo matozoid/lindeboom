@@ -393,6 +393,41 @@ block parsegen_precedence_loop_stays_in_sll:
     ["1 * 2 + 3 + + * 4", long, long])
   doAssert work[2] == 0, $work
 
+block parsegen_explicit_eof_stays_in_sll:
+  # At the end of the input SLL steps over an explicit `EOF` to see which
+  # alternatives finish, so the decision needs no full context.
+  var (a, t, _) = analyzed(g("s : ID EOF | ID ID EOF ;"))
+  a.predictionCache = newPredictionCache(trackWork = true)
+  for input in ["p", "p q"]:
+    var diagnostics = Diagnostics(filename: "input")
+    let n = a.interpret(tokenize[int](t, input, diagnostics), input,
+      a.parserRules[0], diagnostics)
+    doAssert n != nil and not diagnostics.hasErrors, $diagnostics.items
+  doAssert a.predictionCache.fullContextPredictions == 0,
+    $a.predictionCache.fullContextPredictions
+
+block parsegen_full_context_waits_for_one_lowest_alternative:
+  # After `x y`, `d`'s first alternative shares a configuration with its
+  # second and the second one with its third. Taking the lowest of them
+  # there would fail on `x y y c`; as in ANTLR, full context reads on until
+  # every group has the same lowest alternative.
+  let rules = "s : d 'y'? 'c' EOF ;\nd : 'x' | 'x' 'y'? | 'x' 'y' ;"
+  expectTree(rules, "x y y c", """
+    s
+    ├── d
+    │   ├── 'x'
+    │   └── 'y'
+    ├── 'y'
+    └── 'c'
+    """)
+  expectTree(rules, "x y c", """
+    s
+    ├── d
+    │   └── 'x'
+    ├── 'y'
+    └── 'c'
+    """)
+
 block parsegen_context_sensitive_decision:
   # `e`'s alternatives meet after `a` or `b` with an empty context: a real
   # SLL conflict that full context resolves.

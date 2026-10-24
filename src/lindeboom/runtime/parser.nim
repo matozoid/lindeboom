@@ -55,6 +55,7 @@ type
       ## has precedence 0
     trackWork: bool
     work: int
+    fullContextCount: int ## predictions that needed full context
     fullContextOnly: bool ## skip SLL: every prediction in full context
 
   SourceText = ref object
@@ -266,6 +267,10 @@ func predictionWork*(cache: PredictionCache): int =
   ## Number of ATN configurations processed by predictions using this cache.
   cache.work
 
+func fullContextPredictions*(cache: PredictionCache): int =
+  ## Number of predictions using this cache that SLL handed to full context.
+  cache.fullContextCount
+
 func `==`(a, b: AtnConfig): bool =
   a.state == b.state and a.alternative == b.alternative and
     a.stack == b.stack and a.precedence == b.precedence and
@@ -364,6 +369,8 @@ proc atnClosure(seed: seq[AtnConfig], states: openArray[AtnStateData],
   ## With `follows` (SLL), a configuration that leaves its rule with an
   ## empty stack also goes on at every call site of the rule. One that
   ## leaves `precedenceRule` through a call of precedence 0 is `suppressed`.
+  ## As in ANTLR, the result keeps only the configurations that can match a
+  ## token, and those that left the start rule (state -1).
   # `seq` assignment aliases its backing storage. DFA transitions feed cached
   # configuration sets back into closure, so the work queue must own its copy.
   var queue = @seed
@@ -395,8 +402,12 @@ proc atnClosure(seed: seq[AtnConfig], states: openArray[AtnStateData],
           next.state = frame.returnState
           next.precedence = frame.precedence
         else:
+          # Nothing follows the end of the start rule, so its precedence and
+          # suppression no longer matter.
           next.stack = gss.bottom
           next.state = -1
+          next.precedence = 0
+          next.suppressed = false
           if follows.len > 0:
             # The caller is unknown: its precedence too, so allow every one.
             for (returnState, outermost) in follows[rule]:
@@ -422,13 +433,18 @@ proc atnClosure(seed: seq[AtnConfig], states: openArray[AtnStateData],
       of atTokens:
         discard
   for key in order:
+    if key[0] >= 0 and not states[key[0]].edges.anyIt(it.kind == atTokens):
+      continue
     result.add AtnConfig(state: key[0], alternative: key[1], precedence: key[2],
       suppressed: key[3], stack: current[key])
 
 proc conflicting(configs: openArray[AtnConfig]): bool =
-  ## ANTLR's termination test: every (state, context) is reachable through
-  ## several alternatives and no state belongs to a single alternative, so
-  ## more lookahead cannot separate them.
+  ## The SLL test that hands a decision to full context: every (state,
+  ## context) is reachable through several alternatives and no state belongs
+  ## to a single alternative. ANTLR's `hasSLLConflictTerminatingPrediction`
+  ## needs only *some* such group; this one stays in SLL longer, which costs
+  ## cached lookahead but never a different choice, since an alternative
+  ## that is alone in SLL is also alone in full context.
   var byContext = initTable[(int, int, int), HashSet[int]]()
   var byState = initTable[int, HashSet[int]]()
   for c in configs:
@@ -441,6 +457,36 @@ proc conflicting(configs: openArray[AtnConfig]): bool =
   for alts in byState.values:
     if alts.len < 2: return false
   true
+
+proc settled(configs: openArray[AtnConfig]): int =
+  ## ANTLR's `resolvesToJustOneViableAlt`, the full-context test: when the
+  ## lowest alternative of every (state, context) is the same one, it is the
+  ## choice, because configurations that share a state and a context match
+  ## the same inputs and an ambiguity takes the lowest alternative.
+  ## -1 while the groups still disagree.
+  var lowest = initTable[(int, int, int), int]()
+  for c in configs:
+    let group = (c.state, c.stack, c.precedence)
+    lowest[group] = min(lowest.getOrDefault(group, high(int)), c.alternative)
+  result = -1
+  for alternative in lowest.values:
+    if result >= 0 and alternative != result: return -1
+    result = alternative
+
+func advance(configs: openArray[AtnConfig], states: openArray[AtnStateData],
+    kind: int): seq[AtnConfig] =
+  ## The configurations after matching a token of `kind`.
+  for c in configs:
+    if c.state < 0: continue
+    for edge in states[c.state].edges:
+      if edge.kind == atTokens and kind in edge.tokens:
+        var advanced = c
+        advanced.state = edge.target
+        result.add advanced
+
+func finished(configs: openArray[AtnConfig]): seq[AtnConfig] =
+  for c in configs:
+    if c.state < 0 and c notin result: result.add c
 
 proc expectedAtn(configs: openArray[AtnConfig], states: openArray[AtnStateData]): seq[int] =
   var expected = initHashSet[int]()
@@ -499,16 +545,18 @@ proc sllTarget(cache: PredictionCache, source, kind: int,
     d: AtnDecisionData, decision, precedence: int,
     states: openArray[AtnStateData], rules: openArray[AtnRuleData]): int =
   ## The DFA state after token `kind` in `source`, computed over the ATN
-  ## and added with its edge.
-  var next: seq[AtnConfig]
-  for c in cache.dfaStates[source].configs:
-    if c.state < 0: continue
-    for edge in states[c.state].edges:
-      if edge.kind == atTokens and kind in edge.tokens:
-        var advanced = c
-        advanced.state = edge.target
-        next.add advanced
-  if next.len == 0:
+  ## and added with its edge. At the end of the input (`kind` 0) only the
+  ## alternatives that leave the start rule count, before or after an
+  ## explicit `EOF`; the state is then resolved to the one of them, or to a
+  ## full-context retry.
+  let next = advance(cache.dfaStates[source].configs, states, kind)
+  var configs: seq[AtnConfig]
+  if next.len > 0:
+    configs = atnClosure(next, states, rules, cache.stopRules,
+      cache.follows, cache.gss, cache)
+  if kind == 0:
+    configs = finished(cache.dfaStates[source].configs & configs)
+  if configs.len == 0:
     # No viable alternative. A loop exit is the useful recovery choice when
     # the caller's continuation cannot match: let the real parser report and
     # recover at that call site instead of turning prediction failure into a
@@ -516,15 +564,13 @@ proc sllTarget(cache: PredictionCache, source, kind: int,
     result = cache.dfaState(decision, precedence, @[])
     cache.resolve(result, if high(int) in d.alternativeIds: high(int) else: -2)
   else:
-    let configs = atnClosure(next, states, rules, cache.stopRules,
-      cache.follows, cache.gss, cache)
     result = cache.dfaState(decision, precedence, configs)
     var survivors = initHashSet[int]()
     for c in configs: survivors.incl c.alternative
-    if survivors.len > 1 and conflicting(configs):
-      cache.resolve(result, -2)
-    elif survivors.len == 1:
+    if survivors.len == 1:
       for alternative in survivors: cache.resolve(result, alternative)
+    elif kind == 0 or conflicting(configs):
+      cache.resolve(result, -2)
   cache.dfaStates[source].transitions[kind] = result
 
 proc predictSll[K, L, T](p: ParserState[K, L, T], decision: int,
@@ -546,14 +592,6 @@ proc predictSll[K, L, T](p: ParserState[K, L, T], decision: int,
   var offset = p.i
   while not cache.dfaStates[s].resolved:
     let kind = ord(p.tokens[offset].kind)
-    if kind == 0:
-      # At the end of the input only the alternatives that left the rule
-      # are left; one of them, or a retry.
-      var accepted = initHashSet[int]()
-      for c in cache.dfaStates[s].configs:
-        if c.state < 0: accepted.incl c.alternative
-      if accepted.len != 1: return -2
-      for alternative in accepted.items: return alternative
     var target = cache.dfaStates[s].transitions.getOrDefault(kind, -1)
     if target < 0:
       target = cache.sllTarget(s, kind, d, decision, precedence, states, rules)
@@ -584,60 +622,37 @@ proc predictLl[K, L, T](p: var ParserState[K, L, T], decision: int,
   for i, state in p.returnStates:
     key.add $state & ":" & $p.precedences[i] & ","
   key.add "|"
+  configs = atnClosure(configs, states, rules, stopRules, [], gss, cache)
   while true:
     let kind = ord(p.tokens[offset].kind)
     key.add $kind & ","
     if cache != nil and cache.entries.hasKey(key):
       return cache.entries[key]
-    configs = atnClosure(configs, states, rules, stopRules, [], gss, cache)
+    let next = advance(configs, states, kind)
     if kind == 0:
-      var accepted = high(int)
-      var hasAccepted = false
-      for c in configs:
-        if c.state < 0:
-          accepted = min(accepted, c.alternative)
-          hasAccepted = true
-      if hasAccepted:
+      # The lowest alternative that leaves the start rule, before or after
+      # an explicit `EOF`.
+      var ending = finished(configs)
+      if next.len > 0:
+        ending.add finished(atnClosure(next, states, rules, stopRules, [],
+          gss, cache))
+      if ending.len > 0:
+        let accepted = min(ending.mapIt(it.alternative))
         if cache != nil: cache.entries[key] = accepted
         return accepted
-    let expected = expectedAtn(configs, states)
-    var next: seq[AtnConfig]
-    for c in configs:
-      if c.state < 0: continue
-      for edge in states[c.state].edges:
-        if edge.kind == atTokens and kind in edge.tokens:
-          var advanced = c
-          advanced.state = edge.target
-          next.add advanced
-    if next.len == 0:
+    if next.len == 0 or kind == 0:
       # A loop exit is the useful recovery choice, as in `sllTarget`.
       for alternative in d.alternativeIds:
         if alternative == high(int):
           return alternative
+      let expected = expectedAtn(configs, states)
       if expected.len == 0: p.failPrediction(offset, [0])
       p.failPrediction(offset, expected)
     configs = atnClosure(next, states, rules, stopRules, [], gss, cache)
-    var survivors = initHashSet[int]()
-    for c in configs: survivors.incl c.alternative
-    if survivors.len > 1 and conflicting(configs):
-      let lowest = min(toSeq(survivors.items))
-      if cache != nil: cache.entries[key] = lowest
-      return lowest
-    if survivors.len == 1 and kind != 0:
-      for alternative in survivors.items:
-        if cache != nil: cache.entries[key] = alternative
-        return alternative
-    if kind == 0:
-      var accepted = high(int)
-      var hasAccepted = false
-      for c in configs:
-        if c.state < 0:
-          accepted = min(accepted, c.alternative)
-          hasAccepted = true
-      if hasAccepted:
-        if cache != nil: cache.entries[key] = accepted
-        return accepted
-      p.failPrediction(offset, expectedAtn(configs, states))
+    let choice = settled(configs)
+    if choice >= 0:
+      if cache != nil: cache.entries[key] = choice
+      return choice
     inc offset
 
 proc predict*[K, L, T](p: var ParserState[K, L, T], decision: int,
@@ -651,6 +666,7 @@ proc predict*[K, L, T](p: var ParserState[K, L, T], decision: int,
   let sllCache = if cache != nil: cache else: newPredictionCache()
   result = p.predictSll(decision, states, decisions, rules, sllCache, precedence)
   if result == -2:
+    if cache != nil and cache.trackWork: inc cache.fullContextCount
     result = p.predictLl(decision, states, decisions, rules, cache, precedence)
 
 proc failPrediction*[K, L, T](p: var ParserState[K, L, T], at: int,
