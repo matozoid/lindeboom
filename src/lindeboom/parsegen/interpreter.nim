@@ -120,7 +120,7 @@ proc runRuleBody(a: Analysis, p: var Parser, r, prec: int, result: var Node) =
   if a.isPrecRule[r]:
     while true:
       let choice = a.adaptivePredict(p, a.loopDecision[r], prec)
-      if choice == high(int): break
+      if choice == loopExit: break
       a.extend(p, r, choice, result)
 
 proc runRule(a: Analysis, p: var Parser, r: int, prec = 0, returnState = -1): Node =

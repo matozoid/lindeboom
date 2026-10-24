@@ -241,7 +241,7 @@ proc genLoop(g: var Gen, i, indent: int) =
     if g.a.isLoopAlt(i, k):
       g.line(indent + 1, "of " & $k & ":")
       g.genExtend(i, k, indent + 2)
-  g.line(indent + 1, "of high(int): break")
+  g.line(indent + 1, "of loopExit: break")
   g.line(indent + 1, "else:")
   g.wrapped(indent + 2, "p.fail({", g.idents(g.a.loopContinuation(i)), "})")
 

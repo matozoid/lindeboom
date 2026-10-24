@@ -517,7 +517,7 @@ proc buildAtn(a: var Analysis) =
             current = next
           a.epsilon(exit, loop)
       loopChoice.alternatives.add stop
-      loopChoice.alternativeIds.add high(int)
+      loopChoice.alternativeIds.add loopExit
       loopChoice.minimums.add -1
       a.loopDecision[i] = a.decisions.len
       a.decisions.add loopChoice

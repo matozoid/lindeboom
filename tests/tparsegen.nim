@@ -406,6 +406,19 @@ block parsegen_explicit_eof_stays_in_sll:
   doAssert a.predictionCache.fullContextPredictions == 0,
     $a.predictionCache.fullContextPredictions
 
+block parsegen_no_viable_operator_ends_the_loop:
+  # No operator alternative of `e` can take `b`, so the loop exits and `s`,
+  # which called `e`, reports the error, in local and in full context alike.
+  for fullContextOnly in [false, true]:
+    var (a, t, _) = analyzed(g("s : e ';' ;\ne : e '+' e | ID ;"))
+    a.predictionCache = newPredictionCache(fullContextOnly = fullContextOnly)
+    let input = "a b ;"
+    var diagnostics = Diagnostics(filename: "input")
+    discard a.interpret(tokenize[int](t, input, diagnostics), input,
+      a.parserRules[0], diagnostics)
+    doAssert $diagnostics.items ==
+      "@[input:1:3: error: expected ';' but found ID 'b']", $diagnostics.items
+
 block parsegen_full_context_keeps_nothing_in_the_cache:
   # `e` needs full context, under a call stack as deep as the nesting. The
   # cache that the parser keeps across parses holds only what SLL adds, so
