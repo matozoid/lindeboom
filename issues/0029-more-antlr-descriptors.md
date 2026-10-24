@@ -1,7 +1,7 @@
 ---
 id: 29
 title: Port more of ANTLR 4's runtime test descriptors
-status: open
+status: done
 labels: [parser, testing]
 depends: [17]
 ---
@@ -22,7 +22,7 @@ precedence climbing interact.
       Performance ones
 - [x] The LeftRecursion descriptors (expressions, suffixes, prefixes,
       associativity, ternaries, `PrecedenceFilterConsidersContext` variants)
-- [ ] The SemPredEvalParser descriptors on precedence; the others wait for
+- [x] The SemPredEvalParser descriptors on precedence; the others wait for
       issue 22
 - [x] Each one in the interpreter and as a generated parser, as now; a list
       in `tantlr.nim` of the descriptors left out and why
@@ -56,6 +56,11 @@ prediction at the end of the input stepped over only one `EOF`
 not a Nim identifier (Labels). Left out, as `tantlr.nim` lists:
 no tree-less or SLL-only mode, non-greedy `??`, semantic predicates, and
 the ParseTrees trees after error recovery, which differs from ANTLR's.
+
+Of SemPredEvalParser only AtomWithClosureInTranslatedLRRule is on
+precedence: it spells out ANTLR's translation of `e : e '+' e | ('a' |
+'b'+)`, and is ported as that rule. The other 25 test semantic predicates
+and wait for issue 22.
 
 `newPredictionCache(fullContextOnly = true)` skips SLL and predicts every
 decision in full context; `fullContextOnly(a)` in `codegenhelpers` gives an

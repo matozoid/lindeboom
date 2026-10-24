@@ -33,3 +33,6 @@ tokens or text through actions were ported by hand with the tree ANTLR
 builds. In OpenDeviceStatement_Case3 ANTLR's start rule `statement`
 matches only a prefix of the input, as it does not end in `EOF`; here the
 start rule must match all of it, so the port starts at `program`.
+SemPredEvalParser's AtomWithClosureInTranslatedLRRule writes out by hand
+the translation ANTLR gives a left-recursive rule, with the precedence as
+an argument and a predicate; the port is the left-recursive rule itself.

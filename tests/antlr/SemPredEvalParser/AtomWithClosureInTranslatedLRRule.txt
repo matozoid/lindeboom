@@ -1,0 +1,16 @@
+[grammar]
+grammar T;
+start : e EOF;
+e
+    :   e '+' e
+    |   ( 'a' | 'b'+ )
+    ;
+
+[start]
+start
+
+[input]
+"a+b+a"
+
+[tree]
+(start (e (e (e a) + (e b)) + (e a)))

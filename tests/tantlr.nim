@@ -20,6 +20,8 @@
 ##   ExtraToken, ExtraTokensAndAltLabels, NoViableAlt and Sync (trees after
 ##   error recovery, which differs from ANTLR's), and
 ##   TokenAndRuleContextString (prints the rule invocation stack).
+## - SemPredEvalParser: all but AtomWithClosureInTranslatedLRRule, the one
+##   on precedence; the others need semantic predicates (issue 22).
 
 import std/[algorithm, assertions, os, strutils, tables]
 from std/unicode import runeLen
