@@ -44,11 +44,10 @@ type
     start*, stop*: int
 
   PredictionCache* = ref object
-    entries: Table[string, int] ## full-context prediction results
     dfaIndices: Table[DfaKey, int]
     dfaStarts: Table[(int, int), int] ## start state by decision and precedence
     dfaStates: seq[PredictionDfaState]
-    gss: Gss
+    gss: Gss ## stacks of the DFA's configurations; full context has its own
     stopRules: seq[int] ## rule whose stop state each ATN state is, or -1
     follows: seq[seq[(int, bool)]]
       ## return state of each call site of each rule, and whether the call
@@ -261,10 +260,8 @@ proc newPredictionCache*(trackWork = false,
     fullContextOnly = false): PredictionCache =
   ## `fullContextOnly` predicts in full context without trying SLL first,
   ## which must give the same parses; tests compare the two.
-  PredictionCache(entries: initTable[string, int](),
-    dfaIndices: initTable[DfaKey, int](), dfaStarts: initTable[(int, int), int](),
-    gss: Gss(indices: initTable[GssKey, int](),
-      setIndices: initTable[seq[int], int]()), trackWork: trackWork,
+  PredictionCache(dfaIndices: initTable[DfaKey, int](),
+    dfaStarts: initTable[(int, int), int](), gss: Gss(), trackWork: trackWork,
     fullContextOnly: fullContextOnly)
 
 func predictionWork*(cache: PredictionCache): int =
@@ -274,6 +271,10 @@ func predictionWork*(cache: PredictionCache): int =
 func fullContextPredictions*(cache: PredictionCache): int =
   ## Number of predictions using this cache that SLL handed to full context.
   cache.fullContextCount
+
+func cachedStacks*(cache: PredictionCache): int =
+  ## Number of call stacks the cache holds, which only SLL adds to.
+  cache.gss.sets.len
 
 func `==`(a, b: AtnConfig): bool =
   a.state == b.state and a.alternative == b.alternative and
@@ -631,12 +632,14 @@ proc predictLl[K, L, T](p: var ParserState[K, L, T], decision: int,
     states: openArray[AtnStateData], decisions: openArray[AtnDecisionData],
     rules: openArray[AtnRuleData], cache: PredictionCache = nil,
     precedence = 0): int =
-  ## Predicts in the context of the active parser call stack.
+  ## Predicts in the context of the active parser call stack. As in ANTLR,
+  ## nothing of it is kept: its stacks are in a `Gss` of its own, which would
+  ## otherwise grow with every call stack the parser reaches.
   let d = decisions[decision]
   var activeCache = cache
   if activeCache == nil: activeCache = newPredictionCache()
   activeCache.prepare(states, rules)
-  let gss = activeCache.gss
+  let gss = Gss()
   template stopRules: untyped = activeCache.stopRules
   var context = gss.bottom
   for i, returnState in p.returnStates:
@@ -646,25 +649,16 @@ proc predictLl[K, L, T](p: var ParserState[K, L, T], decision: int,
     context = gss.single(gss.push(returnState, context, callerPrecedence))
   var configs = d.seed(context, precedence)
   var offset = p.i
-  var key = $decision & ":" & $precedence & ":true:"
-  for i, state in p.returnStates:
-    key.add $state & ":" & $p.precedences[i] & ","
-  key.add "|"
   configs = atnClosure(configs, states, rules, stopRules, [], gss, cache)
   while true:
     let kind = ord(p.tokens[offset].kind)
-    key.add $kind & ","
-    if cache != nil and cache.entries.hasKey(key):
-      return cache.entries[key]
     let next = advance(configs, states, kind)
     if kind == 0:
       # The lowest alternative that leaves the start rule, before or after
       # an explicit `EOF`.
       let ends = ending(configs, states, rules, stopRules, [], gss, cache)
       if ends.len > 0:
-        let accepted = min(ends.mapIt(it.alternative))
-        if cache != nil: cache.entries[key] = accepted
-        return accepted
+        return min(ends.mapIt(it.alternative))
     if next.len == 0 or kind == 0:
       # A loop exit is the useful recovery choice, as in `sllTarget`.
       for alternative in d.alternativeIds:
@@ -675,9 +669,7 @@ proc predictLl[K, L, T](p: var ParserState[K, L, T], decision: int,
       p.failPrediction(offset, expected)
     configs = atnClosure(next, states, rules, stopRules, [], gss, cache)
     let choice = settled(configs)
-    if choice >= 0:
-      if cache != nil: cache.entries[key] = choice
-      return choice
+    if choice >= 0: return choice
     inc offset
 
 proc predict*[K, L, T](p: var ParserState[K, L, T], decision: int,

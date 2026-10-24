@@ -1,7 +1,7 @@
 ---
 id: 25
 title: Drop the unbounded full-LL prediction memo
-status: open
+status: done
 labels: [parser, performance]
 depends: [17]
 ---
@@ -19,7 +19,16 @@ ANTLR 4 does not cache full-context predictions; only the SLL DFA is kept.
 
 ## Tasks
 
-- [ ] Remove `entries` and the per-token key building from full-LL prediction
-- [ ] Full-LL stacks in a per-prediction (or per-parse) structure, not in the
+- [x] Remove `entries` and the per-token key building from full-LL prediction
+- [x] Full-LL stacks in a per-prediction (or per-parse) structure, not in the
       shared cache, so the module-level cache holds only the DFA
-- [ ] Check the `tparsegen` work bounds and the fuzz suite still pass
+- [x] Check the `tparsegen` work bounds and the fuzz suite still pass
+
+## Outcome
+
+`entries` and its key are gone. Each full-LL prediction has a `Gss` of its
+own, so the shared cache holds only the SLL DFA and the stacks of its
+configurations. `cachedStacks` counts those;
+`parsegen_full_context_keeps_nothing_in_the_cache` checks that nesting
+deeper under a full-context decision adds none (with the shared `Gss` the
+count went 7, 11, 31 for depths 2, 3 and 20).

@@ -406,6 +406,30 @@ block parsegen_explicit_eof_stays_in_sll:
   doAssert a.predictionCache.fullContextPredictions == 0,
     $a.predictionCache.fullContextPredictions
 
+block parsegen_full_context_keeps_nothing_in_the_cache:
+  # `e` needs full context, under a call stack as deep as the nesting. The
+  # cache that the parser keeps across parses holds only what SLL adds, so
+  # deeper nesting adds nothing.
+  var (a, t, _) = analyzed(g("""
+s : '(' s ')' | x ;
+x : '$' y | '@' z ;
+y : e ID ;
+z : e INT ID ;
+e : INT | ;
+"""))
+  a.predictionCache = newPredictionCache(trackWork = true)
+  var stacks: seq[int]
+  for depth in [2, 3, 20]:
+    let input = "(".repeat(depth) & " @ 34 abc " & ")".repeat(depth)
+    var diagnostics = Diagnostics(filename: "input")
+    let n = a.interpret(tokenize[int](t, input, diagnostics), input,
+      a.parserRules[0], diagnostics)
+    doAssert n != nil and not diagnostics.hasErrors, $diagnostics.items
+    stacks.add a.predictionCache.cachedStacks
+  doAssert a.predictionCache.fullContextPredictions == 3,
+    $a.predictionCache.fullContextPredictions
+  doAssert stacks[1] == stacks[0] and stacks[2] == stacks[0], $stacks
+
 block parsegen_full_context_waits_for_one_lowest_alternative:
   # After `x y`, `d`'s first alternative shares a configuration with its
   # second and the second one with its third. Taking the lowest of them
